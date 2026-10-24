@@ -32,3 +32,7 @@ graphify-out/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Agent docs and planning (local only)
+CLAUDE.md
+tasks/
