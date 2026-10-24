@@ -1,0 +1,4 @@
+LIBRARY TypelessShell
+EXPORTS
+    DllGetClassObject PRIVATE
+    DllCanUnloadNow PRIVATE
