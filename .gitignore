@@ -36,3 +36,6 @@ desktop.ini
 # Agent docs and planning (local only)
 CLAUDE.md
 tasks/
+
+# Separate repo (Typeless Board)
+typeless-board/

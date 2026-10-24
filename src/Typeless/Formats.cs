@@ -150,6 +150,10 @@ namespace Typeless
         // Compress is built in (PDFsharp), so any PDF qualifies with no external tool.
         public static bool CanCompress(string path) => Norm(path) == "pdf";
 
+        // Parts (keep only some objects) is a window action for any 3D model, built in. The object
+        // count is only known once the window reads the file.
+        public static bool CanParts(string path) => KindOf(path) == Kind.Model;
+
         public static IEnumerable<string> AllSourceExtensions =>
             Table.SelectMany(e => e.Sources).Distinct(StringComparer.Ordinal);
     }

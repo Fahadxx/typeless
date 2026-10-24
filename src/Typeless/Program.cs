@@ -90,6 +90,16 @@ namespace Typeless
                     if (args.Length != 2) return Usage();
                     return ModelInfoFile(args[1]);
 
+                case "--model-parts":
+                    if (args.Length != 2) return Usage();
+                    return ModelPartsFile(args[1]);
+
+                case "--keep-parts":
+                    if (args.Length < 3 || args.Length > 4
+                        || (args.Length == 4 && !string.Equals(args[3], "separate", StringComparison.OrdinalIgnoreCase)))
+                        return Usage();
+                    return KeepPartsFile(args[1], args[2], args.Length == 4);
+
                 case "--probe":
                     if (args.Length < 2) return Usage();
                     return ProbeFile(args[1]);
@@ -152,6 +162,10 @@ namespace Typeless
                 case "--resize-preview":
                     if (args.Length < 3) return Usage();
                     return ResizePreview(args[1], args[2], args.Length > 3 ? args[3] : "idle");
+
+                case "--parts-preview":
+                    if (args.Length < 3) return Usage();
+                    return PartsPreview(args[1], args[2], args.Length > 3 ? args[3] : "idle");
 
                 case "--list-extensions":
                     foreach (string ext in Installer.MenuExtensions)
@@ -370,6 +384,84 @@ namespace Typeless
             catch (Exception ex)
             {
                 Log.Write($"Model info failed: {file}: {ex}");
+                Console.Error.WriteLine(ex.Message);
+                return 1;
+            }
+        }
+
+        // pieces=, then one piece= line per piece (numbered from 1, ModelParts.Find order).
+        // Not a model or no such file: rc 2. A read error: rc 1 with the message.
+        private static int ModelPartsFile(string file)
+        {
+            try
+            {
+                if (!File.Exists(file)) throw new FileNotFoundException($"File not found: {file}", file);
+                if (!Formats.CanParts(file))
+                {
+                    Console.Error.WriteLine($"Not a 3D model: {Path.GetFileName(file)}");
+                    return 2;
+                }
+                List<Piece> pieces = ModelParts.Find(ModelBackend.Read(file));
+                Console.WriteLine("pieces=" + pieces.Count.ToString(CultureInfo.InvariantCulture));
+                for (int i = 0; i < pieces.Count; i++)
+                {
+                    Piece p = pieces[i];
+                    Console.WriteLine($"piece={(i + 1).ToString(CultureInfo.InvariantCulture)} part={p.PartIndex.ToString(CultureInfo.InvariantCulture)} "
+                        + $"name={p.Name} tris={p.TriangleCount.ToString(CultureInfo.InvariantCulture)} bbox={p.BoundsText()}");
+                }
+                return 0;
+            }
+            catch (FileNotFoundException ex)
+            {
+                Log.Write($"Model parts failed: {file}: {ex}");
+                Console.Error.WriteLine(ex.Message);
+                return 2;
+            }
+            catch (Exception ex)
+            {
+                Log.Write($"Model parts failed: {file}: {ex}");
+                Console.Error.WriteLine(ex.Message);
+                return 1;
+            }
+        }
+
+        // Prints the output paths. Nothing to change, nothing selected, one object or a write or
+        // verify error: rc 1 with the message. Not a model, no such file or an invalid spec: rc 2.
+        private static int KeepPartsFile(string file, string spec, bool separate)
+        {
+            try
+            {
+                if (!File.Exists(file)) throw new FileNotFoundException($"File not found: {file}", file);
+                if (!Formats.CanParts(file))
+                {
+                    Console.Error.WriteLine($"Not a 3D model: {Path.GetFileName(file)}");
+                    return 2;
+                }
+                Scene scene = ModelBackend.Read(file);
+                List<Piece> pieces = ModelParts.Find(scene);
+                ModelParts.CheckSeveral(pieces);
+                List<int> keep;
+                try
+                {
+                    keep = ModelParts.ParseSpec(spec, pieces);
+                }
+                catch (FormatException ex)
+                {
+                    Console.Error.WriteLine(ex.Message);
+                    return 2;
+                }
+                foreach (string output in ModelParts.Keep(file, scene, pieces, keep, separate)) Console.WriteLine(output);
+                return 0;
+            }
+            catch (FileNotFoundException ex)
+            {
+                Log.Write($"Keep parts failed: {file} {spec}: {ex}");
+                Console.Error.WriteLine(ex.Message);
+                return 2;
+            }
+            catch (Exception ex)
+            {
+                Log.Write($"Keep parts failed: {file} {spec} separate={separate}: {ex}");
                 Console.Error.WriteLine(ex.Message);
                 return 1;
             }
@@ -719,6 +811,28 @@ namespace Typeless
             }
         }
 
+        private static int PartsPreview(string file, string outPng, string state)
+        {
+            if (!Formats.CanParts(file))
+            {
+                Console.Error.WriteLine($"Not a 3D model: {file}");
+                return 2;
+            }
+            try
+            {
+                var window = new PartsWindow(file, preview: true);
+                window.RenderPreview(outPng, state);
+                Console.WriteLine(outPng);
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Log.Write($"Parts preview failed: {ex}");
+                Console.Error.WriteLine(ex.Message);
+                return 1;
+            }
+        }
+
         private static int Usage()
         {
             PrintUsage();
@@ -737,6 +851,8 @@ namespace Typeless
             Console.WriteLine("  Typeless --resize <file> <height|orig> [fps|orig]  Lower a video's resolution (short side) and/or frame rate, print the output path and size change");
             Console.WriteLine("  Typeless --resize-info <file>    Print a video's displayed size, fps, and the smaller heights and frame rates on offer");
             Console.WriteLine("  Typeless --model-info <file>     Print a 3D model's parts, triangles, vertices, bbox (mm), per-part color and what the reader dropped");
+            Console.WriteLine("  Typeless --model-parts <file>    Print a 3D model's separate objects (pieces): source part, name, triangles, bbox (mm)");
+            Console.WriteLine("  Typeless --keep-parts <file> <spec> [separate]  Keep only some objects (e.g. 1,3-5 or box:x0,y0,x1,y1 in mm), same format, one file or one per object, print the output paths");
             Console.WriteLine("  Typeless --probe <file>          Print duration, frame rate and video keyframe times");
             Console.WriteLine("  Typeless --audio <file>          Save a video's audio track as is (no re-encode), print the output path");
             Console.WriteLine("  Typeless --clean <file>          Remove an image's or video's metadata (location, camera, dates), print the output path");
@@ -752,12 +868,15 @@ namespace Typeless
             Console.WriteLine("  Typeless --compress-preview <file> <out.png> [idle|running|ready|done|error]  Render the compress window to PNG (dev)");
             Console.WriteLine("  Typeless --rotate-preview <file> <out.png> [idle|changed|done|error]  Render the rotate window to PNG (dev; changed = rotated right, then mirrored)");
             Console.WriteLine("  Typeless --resize-preview <file> <out.png> [idle|changed|running|done|error]  Render the resize window to PNG (dev; changed = first smaller height and fps)");
+            Console.WriteLine("  Typeless --parts-preview <file> <out.png> [idle|select|separate|done|error]  Render the parts window to PNG (dev; select = pieces 1-2 kept, separate = select plus Separate files)");
             Console.WriteLine("  (dev env) TYPELESS_AUTOPICK=<n>  Radial clicks item n (0-based, full list; flips to page 2 if needed)");
             Console.WriteLine("  (dev env) TYPELESS_AUTOCROP=x,y,w,h  TYPELESS_AUTOTRIM=start,end  Fractions; select and save after load");
             Console.WriteLine("  (dev env) TYPELESS_AUTOPAGES=<spec>  Pages window applies the --pages spec and saves after thumbnails load");
             Console.WriteLine("  (dev env) TYPELESS_AUTOCOMPRESS=light|balanced|strong  Compress window selects that level and saves when it is ready");
             Console.WriteLine("  (dev env) TYPELESS_AUTOROTATE=<deg>[,h][,v]  Rotate window presses the flip buttons, then turns deg clockwise, and saves after load (same result as --rotate)");
             Console.WriteLine("  (dev env) TYPELESS_AUTORESIZE=<height|orig>[,<fps|orig>]  Resize window selects those values and saves after load (same result as --resize)");
+            Console.WriteLine("  (dev env) TYPELESS_AUTOPARTS=<spec>  Parts window keeps the --keep-parts spec and saves after load (same result as --keep-parts)");
+            Console.WriteLine("  (dev env) TYPELESS_PARTS_SEPARATE=1  With TYPELESS_AUTOPARTS, save separate files (same result as --keep-parts ... separate)");
             Console.WriteLine("  (dev env) TYPELESS_AUTOPLAY=1  Trim window plays the range after load, closes at the end");
             Console.WriteLine("  (dev env) TYPELESS_NO_POWERPOINT=1  Skip PowerPoint; convert slides with LibreOffice");
             Console.WriteLine("  Typeless --list-extensions       List the context menu extensions");

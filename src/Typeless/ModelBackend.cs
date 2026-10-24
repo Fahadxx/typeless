@@ -52,7 +52,8 @@ namespace Typeless
             List<string> readerDropped = scene.Dropped.ToList();
 
             bool mtl = target == "obj" && scene.Parts.Any(p => p.Color != null);
-            (string finalMain, string? finalMtl) = PickNames(src, target, mtl);
+            string dir = Path.GetDirectoryName(Path.GetFullPath(src)) ?? ".";
+            (string finalMain, string? finalMtl) = PickNames(dir, $"{Path.GetFileNameWithoutExtension(src)}_{target}", target, mtl);
 
             string tempMain = Path.Combine(work, Path.GetFileName(finalMain));
             string? tempMtl = finalMtl != null ? Path.Combine(work, Path.GetFileName(finalMtl)) : null;
@@ -80,24 +81,27 @@ namespace Typeless
             return finals;
         }
 
-        // Standard <stem>_<target>.<target>. A colored obj needs <name>.obj and <name>.mtl both free,
-        // so the " (n)" variant is chosen for the pair and the mtllib line names the final mtl.
-        private static (string Main, string? Mtl) PickNames(string src, string target, bool mtl)
+        // dir\<name>.<ext>, or the first free " (n)" variant (the Naming rule). A colored obj needs
+        // <name>.obj and <name>.mtl both free, so the variant is chosen for the pair and the mtllib
+        // line names the final mtl. taken holds names already picked in the same batch (they do not
+        // exist yet), so several outputs never collide with each other.
+        internal static (string Main, string? Mtl) PickNames(string dir, string name, string ext, bool mtl,
+            ISet<string>? taken = null)
         {
-            if (!mtl) return (Naming.Final(src, target), null);
-            string dir = Path.GetDirectoryName(Path.GetFullPath(src)) ?? ".";
-            string name = $"{Path.GetFileNameWithoutExtension(src)}_{target}";
             for (int n = 1; ; n++)
             {
                 string stem = n == 1 ? name : $"{name} ({n})";
-                string obj = Path.Combine(dir, stem + ".obj");
-                string m = Path.Combine(dir, stem + ".mtl");
-                if (!File.Exists(obj) && !Directory.Exists(obj) && !File.Exists(m) && !Directory.Exists(m))
-                    return (obj, m);
+                string main = Path.Combine(dir, $"{stem}.{ext}");
+                string? m = mtl ? Path.Combine(dir, stem + ".mtl") : null;
+                if (Free(main, taken) && (m == null || Free(m, taken))) return (main, m);
             }
         }
 
-        private static void Verify(Scene expected, string written, string target)
+        private static bool Free(string path, ISet<string>? taken) =>
+            !File.Exists(path) && !Directory.Exists(path) && (taken == null || !taken.Contains(path));
+
+        // Reads the written file back: exact triangle count, bbox within tolerance (target is normalized).
+        internal static void Verify(Scene expected, string written, string target)
         {
             if (!File.Exists(written)) throw new InvalidOperationException("Verification failed: nothing was written.");
             Scene back;

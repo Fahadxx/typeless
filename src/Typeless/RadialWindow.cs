@@ -70,7 +70,7 @@ namespace Typeless
         // Raised on the UI thread when the user picks a target.
         public event Action? Picked;
 
-        // Raised on the UI thread when the user picks a window action slice ("crop", "trim", "pages", "compress", "rotate" or "resize") for the file path.
+        // Raised on the UI thread when the user picks a window action slice ("crop", "trim", "pages", "compress", "rotate", "resize" or "parts") for the file path.
         // No conversion runs: the owner opens the action window and calls CloseForHandoff.
         public event Action<string, string>? ActionRequested;
 
@@ -228,7 +228,7 @@ namespace Typeless
         // Window actions are not formats: they open their own window for one file.
         private static bool IsWindowAction(string target) =>
             target == "crop" || target == "trim" || target == "pages" || target == "compress" || target == "rotate"
-            || target == "resize";
+            || target == "resize" || target == "parts";
 
         // Instant actions run inside the radial like a conversion, with PdfEdit or MediaBackend instead of Converter.
         private static bool IsInstantAction(string target) => target == "merge" || target == "split" || target == "audio" || target == "clean";
@@ -423,6 +423,7 @@ namespace Typeless
             "clean" => "Remove location & camera info",
             "rotate" => "Rotate or flip",
             "resize" => "Lower resolution or frame rate",
+            "parts" => "Keep only some objects",
             "more" => $"{targets.Count - PageSize} more options",
             "back" => "Main options",
             _ => $"{sourceExt.ToUpperInvariant()}  →  {target.ToUpperInvariant()}",
@@ -974,6 +975,7 @@ namespace Typeless
             "stl" or "3mf" or "obj" or "ply" or "glb" => "", // Cube (Segoe Fluent Icons F158)
             "rotate" => "", // Rotate: clockwise arrow
             "resize" => "", // Back to window: inward arrows, smaller
+            "parts" => "", // SelectAll: dashed box, picks some objects
             "clean" => "", // Shield: privacy
             "pages" => "", // ViewAll: page grid
             "merge" => "", // Copy: stacked pages

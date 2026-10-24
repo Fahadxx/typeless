@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.0
+
+- PARTS for 3D models: finds the separate objects in a file (even a merged STL) and shows them from the top. Click objects or drag a box to choose which to keep, then save one file (`<stem>_parts.<ext>`) or each object as its own file (`<stem>_part_1.<ext>`, ...).
+- Whole objects only: nothing is cut or moved, and kept geometry is bit-identical to the source. Every output is read back and checked before it is saved.
+- CLI `--model-parts`, `--keep-parts` and `--parts-preview`, plus the `TYPELESS_AUTOPARTS` and `TYPELESS_PARTS_SEPARATE` hooks.
+
 ## 0.10.0
 
 - 3D models: right-click any `stl`, `3mf`, `obj`, `ply` or `glb` file and convert it to any of the others. Built in, no extra tools.

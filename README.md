@@ -14,6 +14,8 @@ A single video gets a **Resize** slice: a small window to lower the resolution (
 
 **3D models** (stl, 3mf, obj, ply, glb) convert to each other, built in, with no other software needed. Geometry is exact. Parts, names and colors are kept where the target format can hold them; textures, UVs and slicer settings are dropped. Every output is read back and checked (triangle count and bounding box) before it is saved. glb uses meters per its spec, so sizes stay physically correct. Bambu and Prusa project 3MFs are flattened to their build layout.
 
+A single 3D model also gets a **Parts** slice: Typeless finds the separate objects in the file (even in an STL where everything was merged into one mesh) and shows them from the top. Click an object to keep or drop it, or drag a box to keep only the objects fully inside it (Shift adds, Alt removes; Ctrl+A keeps all, I inverts). Save writes one file with only the kept objects (`<name>_parts.<ext>`) or each kept object as its own file (`<name>_part_1.<ext>`, `_part_2`, ...), in the same format. Objects are kept whole, never cut or moved, so their geometry is bit-identical to the source, and every file is read back and checked before anything is saved.
+
 When a file has more than 9 options, the menu shows the 8 most used plus **More**, which flips to the rest (with **Back** to return). Keys: 1-9 pick on the current page, 0 or Tab switches pages, Backspace goes back, Esc closes.
 
 ## Requirements
@@ -51,6 +53,8 @@ Typeless --rotate <file> <deg> [h] [v]  Flip, then rotate an image or video cloc
 Typeless --resize <file> <height|orig> [fps|orig]  Lower a video's resolution (short side) and/or frame rate, print the path and size change
 Typeless --resize-info <file>    Print a video's displayed size, fps, and the smaller heights and frame rates on offer
 Typeless --model-info <file>     Print a 3D model's parts, triangles, vertices, bbox (mm), per-part color and what the reader dropped
+Typeless --model-parts <file>    Print a 3D model's separate objects (pieces): source part, name, triangles, bbox (mm)
+Typeless --keep-parts <file> <spec> [separate]  Keep only some objects (e.g. 1,3-5 or box:x0,y0,x1,y1 in mm), one file or one per object, print the output paths
 Typeless --merge <file> <file> [...]  Merge PDFs and images (given order) into one PDF
 Typeless --split <file>          Split a PDF into one PDF per page
 Typeless --pages <file> <spec>   Pick, reorder and rotate pages, e.g. 3,1-2,5r90,6r180
@@ -62,6 +66,7 @@ Typeless --pages-preview <file> <out.png> [idle|select|done|error]  Render the p
 Typeless --compress-preview <file> <out.png> [idle|running|ready|done|error]  Render the compress window to PNG (dev)
 Typeless --rotate-preview <file> <out.png> [idle|changed|done|error]  Render the rotate window to PNG (dev)
 Typeless --resize-preview <file> <out.png> [idle|changed|running|done|error]  Render the resize window to PNG (dev)
+Typeless --parts-preview <file> <out.png> [idle|select|separate|done|error]  Render the parts window to PNG (dev)
 Typeless --install               Register the Explorer context menu
 Typeless --uninstall             Remove the Explorer context menu
 Typeless --uninstall-verbs       Remove only the classic context menu verbs
@@ -70,7 +75,7 @@ Typeless --version               Print the version
 
 Typeless is a GUI app, so redirect output to see it from a console, for example `Typeless.exe --version | Out-String`.
 
-Dev hook: `TYPELESS_AUTOPICK=<n>` clicks radial item n (0-based, counting across both pages; an item on page 2 flips there first). `TYPELESS_AUTOPAGES=<spec>` (same spec as `--pages`) makes the pages window apply the spec and save once the thumbnails load. `TYPELESS_AUTOCOMPRESS=light|balanced|strong` makes the compress window select that level and save when it is ready. `TYPELESS_AUTOROTATE=<deg>[,h][,v]` makes the rotate window flip, then turn deg clockwise, and save (same result as `--rotate`). `TYPELESS_AUTORESIZE=<height|orig>[,<fps|orig>]` makes the resize window select those values and save (same result as `--resize`).
+Dev hook: `TYPELESS_AUTOPICK=<n>` clicks radial item n (0-based, counting across both pages; an item on page 2 flips there first). `TYPELESS_AUTOPAGES=<spec>` (same spec as `--pages`) makes the pages window apply the spec and save once the thumbnails load. `TYPELESS_AUTOCOMPRESS=light|balanced|strong` makes the compress window select that level and save when it is ready. `TYPELESS_AUTOROTATE=<deg>[,h][,v]` makes the rotate window flip, then turn deg clockwise, and save (same result as `--rotate`). `TYPELESS_AUTORESIZE=<height|orig>[,<fps|orig>]` makes the resize window select those values and save (same result as `--resize`). `TYPELESS_AUTOPARTS=<spec>` (same spec as `--keep-parts`) makes the parts window keep those objects and save, as separate files with `TYPELESS_PARTS_SEPARATE=1` (same result as `--keep-parts`).
 
 ## Windows 11
 

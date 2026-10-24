@@ -43,14 +43,15 @@ namespace Typeless
             radial.Picked += single.Release;
             radial.Closed += (_, _) => single.Release();
 
-            // Action handoff: the crop, trim, pages, compress, rotate or resize window becomes MainWindow before
-            // the radial closes, so the app keeps running.
+            // Action handoff: the crop, trim, pages, compress, rotate, resize or parts window becomes MainWindow
+            // before the radial closes, so the app keeps running.
             CropWindow? crop = null;
             TrimWindow? trim = null;
             PagesWindow? pages = null;
             CompressWindow? compress = null;
             RotateWindow? rotate = null;
             ResizeWindow? resize = null;
+            PartsWindow? parts = null;
             radial.ActionRequested += (action, path) =>
             {
                 Window next;
@@ -59,6 +60,7 @@ namespace Typeless
                 else if (action == "compress") next = compress = new CompressWindow(path);
                 else if (action == "rotate") next = rotate = new RotateWindow(path);
                 else if (action == "resize") next = resize = new ResizeWindow(path);
+                else if (action == "parts") next = parts = new PartsWindow(path);
                 else next = crop = new CropWindow(path);
                 app.MainWindow = next;
                 next.Show();
@@ -67,7 +69,7 @@ namespace Typeless
 
             app.Run(radial);
             return crop?.ExitCode ?? trim?.ExitCode ?? pages?.ExitCode ?? compress?.ExitCode ?? rotate?.ExitCode
-                ?? resize?.ExitCode ?? radial.ExitCode;
+                ?? resize?.ExitCode ?? parts?.ExitCode ?? radial.ExitCode;
         }
 
         // Radial order per kind: these first, in this order, then the rest in their existing order.
@@ -83,7 +85,7 @@ namespace Typeless
         // A single file gets "crop" (croppable image), "trim" (audio or video) plus "resize"
         // (Formats.CanResize) and "audio" (video with an audio track), or for a PDF "pages",
         // "split" (2+ pages) and "compress", plus "rotate" (Formats.CanRotate) and "clean"
-        // (Formats.CanClean) for an image or video.
+        // (Formats.CanClean) for an image or video, or "parts" (Formats.CanParts) for a 3D model.
         // Two or more files get "merge" when every file is a PDF or image.
         // No cap: the radial pages anything past 9.
         internal static IReadOnlyList<string> SlicesFor(IReadOnlyList<string> paths)
@@ -110,6 +112,7 @@ namespace Typeless
             }
             if (paths.Count == 1 && Formats.CanRotate(path)) actions.Add("rotate");
             if (paths.Count == 1 && Formats.CanClean(path)) actions.Add("clean");
+            if (paths.Count == 1 && Formats.CanParts(path)) actions.Add("parts");
             Kind? kind = Formats.KindOf(path);
             List<string> order = kind != null ? Priority(kind.Value).ToList() : new List<string>();
             // OrderBy is stable, so unlisted items keep their relative order after the listed ones.
