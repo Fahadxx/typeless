@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.0
+
+- 3D models: right-click any `stl`, `3mf`, `obj`, `ply` or `glb` file and convert it to any of the others. Built in, no extra tools.
+- Geometry is exact: no remeshing or decimation, and vertex coordinates keep their float32 bits (stl -> 3mf/obj/ply/glb -> stl is byte-identical). Physical size is kept: 3MF units are honored, and glb is written in meters with Y up, as its spec requires.
+- Parts, part names and per-part colors carry over wherever the target can hold them. Bambu/Prusa project 3MFs (Production extension, components, plates) are flattened to their build layout.
+- What a format cannot hold (textures, UVs, slicer settings, per-triangle colors) is dropped and logged.
+- Safe: every output is read back and checked (exact triangle count, bounding box) before it is saved. Damaged files fail with a clear message and nothing is written.
+- CLI `--model-info <file>`, plus a cube icon in the menu.
+
 ## 0.9.0
 
 - Typeless is now a pure file converter. YouTube downloading moved to its own project, [typeless-youtube](https://github.com/Fahadxx/typeless-youtube).

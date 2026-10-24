@@ -40,6 +40,8 @@ namespace Typeless
                 case Kind.Audio:
                 case Kind.Video:
                     return Ffmpeg != null;
+                case Kind.Model:
+                    return true;
                 default:
                     return false;
             }

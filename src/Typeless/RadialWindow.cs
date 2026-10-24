@@ -971,6 +971,7 @@ namespace Typeless
         {
             "more" => MoreGlyph,
             "back" => BackGlyph,
+            "stl" or "3mf" or "obj" or "ply" or "glb" => "", // Cube (Segoe Fluent Icons F158)
             "rotate" => "", // Rotate: clockwise arrow
             "resize" => "", // Back to window: inward arrows, smaller
             "clean" => "", // Shield: privacy

@@ -12,6 +12,8 @@ A single image or video also gets a **Rotate** slice: a small window to rotate l
 
 A single video gets a **Resize** slice: a small window to lower the resolution (2160p down to 240p) and/or the frame rate (60 down to 15 fps), offering only values below the source. Enter re-encodes the video (audio is kept as is) with progress and time left (Esc cancels), saved as `<name>_720p.<ext>`, `<name>_30fps.<ext>` or `<name>_720p30.<ext>` in the same format. Portrait phone clips are sized as they play.
 
+**3D models** (stl, 3mf, obj, ply, glb) convert to each other, built in, with no other software needed. Geometry is exact. Parts, names and colors are kept where the target format can hold them; textures, UVs and slicer settings are dropped. Every output is read back and checked (triangle count and bounding box) before it is saved. glb uses meters per its spec, so sizes stay physically correct. Bambu and Prusa project 3MFs are flattened to their build layout.
+
 When a file has more than 9 options, the menu shows the 8 most used plus **More**, which flips to the rest (with **Back** to return). Keys: 1-9 pick on the current page, 0 or Tab switches pages, Backspace goes back, Esc closes.
 
 ## Requirements
@@ -48,6 +50,7 @@ Typeless --clean <file>          Remove an image's or video's metadata (location
 Typeless --rotate <file> <deg> [h] [v]  Flip, then rotate an image or video clockwise (multiple of 90; mp4/mov stay lossless), print the output path
 Typeless --resize <file> <height|orig> [fps|orig]  Lower a video's resolution (short side) and/or frame rate, print the path and size change
 Typeless --resize-info <file>    Print a video's displayed size, fps, and the smaller heights and frame rates on offer
+Typeless --model-info <file>     Print a 3D model's parts, triangles, vertices, bbox (mm), per-part color and what the reader dropped
 Typeless --merge <file> <file> [...]  Merge PDFs and images (given order) into one PDF
 Typeless --split <file>          Split a PDF into one PDF per page
 Typeless --pages <file> <spec>   Pick, reorder and rotate pages, e.g. 3,1-2,5r90,6r180

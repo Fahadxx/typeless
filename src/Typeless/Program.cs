@@ -86,6 +86,10 @@ namespace Typeless
                     if (args.Length != 2) return Usage();
                     return ResizeInfoFile(args[1]);
 
+                case "--model-info":
+                    if (args.Length != 2) return Usage();
+                    return ModelInfoFile(args[1]);
+
                 case "--probe":
                     if (args.Length < 2) return Usage();
                     return ProbeFile(args[1]);
@@ -330,6 +334,42 @@ namespace Typeless
             catch (Exception ex)
             {
                 Log.Write($"Resize info failed: {file}: {ex}");
+                Console.Error.WriteLine(ex.Message);
+                return 1;
+            }
+        }
+
+        // parts=, triangles=, vertices=, bbox= (mm), one part= line per part, then dropped=.
+        // Not a model or no such file: rc 2. A read error: rc 1 with the message.
+        private static int ModelInfoFile(string file)
+        {
+            try
+            {
+                if (!File.Exists(file)) throw new FileNotFoundException($"File not found: {file}", file);
+                if (Formats.KindOf(file) != Kind.Model)
+                {
+                    Console.Error.WriteLine($"Not a 3D model: {Path.GetFileName(file)}");
+                    return 2;
+                }
+                Scene scene = ModelBackend.Read(file);
+                Console.WriteLine("parts=" + scene.Parts.Count.ToString(CultureInfo.InvariantCulture));
+                Console.WriteLine("triangles=" + scene.TriangleCount.ToString(CultureInfo.InvariantCulture));
+                Console.WriteLine("vertices=" + scene.VertexCount.ToString(CultureInfo.InvariantCulture));
+                Console.WriteLine("bbox=" + scene.BoundsText());
+                foreach (Part p in scene.Parts)
+                    Console.WriteLine($"part={p.Name} tris={p.TriangleCount.ToString(CultureInfo.InvariantCulture)} color={(p.Color is Rgba c ? c.Hex : "none")}");
+                Console.WriteLine("dropped=" + string.Join(",", scene.Dropped));
+                return 0;
+            }
+            catch (FileNotFoundException ex)
+            {
+                Log.Write($"Model info failed: {file}: {ex}");
+                Console.Error.WriteLine(ex.Message);
+                return 2;
+            }
+            catch (Exception ex)
+            {
+                Log.Write($"Model info failed: {file}: {ex}");
                 Console.Error.WriteLine(ex.Message);
                 return 1;
             }
@@ -696,6 +736,7 @@ namespace Typeless
             Console.WriteLine("  Typeless --rotate <file> <deg> [h] [v]  Flip (h, v) then rotate an image or video clockwise (multiple of 90, negative = left), print the output path");
             Console.WriteLine("  Typeless --resize <file> <height|orig> [fps|orig]  Lower a video's resolution (short side) and/or frame rate, print the output path and size change");
             Console.WriteLine("  Typeless --resize-info <file>    Print a video's displayed size, fps, and the smaller heights and frame rates on offer");
+            Console.WriteLine("  Typeless --model-info <file>     Print a 3D model's parts, triangles, vertices, bbox (mm), per-part color and what the reader dropped");
             Console.WriteLine("  Typeless --probe <file>          Print duration, frame rate and video keyframe times");
             Console.WriteLine("  Typeless --audio <file>          Save a video's audio track as is (no re-encode), print the output path");
             Console.WriteLine("  Typeless --clean <file>          Remove an image's or video's metadata (location, camera, dates), print the output path");

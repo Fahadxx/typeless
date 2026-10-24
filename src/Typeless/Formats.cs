@@ -5,7 +5,7 @@ using System.Linq;
 
 namespace Typeless
 {
-    public enum Kind { Image, Pdf, Document, Sheet, Slides, Audio, Video }
+    public enum Kind { Image, Pdf, Document, Sheet, Slides, Audio, Video, Model }
 
     public static class Formats
     {
@@ -36,6 +36,10 @@ namespace Typeless
             new Entry(Kind.Video,
                 new[] { "mp4", "mov", "mkv", "avi", "webm", "wmv", "flv", "m4v" },
                 new[] { "mp4", "mkv", "webm", "mov", "avi", "gif", "mp3", "wav" }),
+            // 3D models, built in (ModelBackend); TargetsFor drops the source's own format.
+            new Entry(Kind.Model,
+                new[] { "stl", "3mf", "obj", "ply", "glb" },
+                new[] { "stl", "3mf", "obj", "ply", "glb" }),
         };
 
         private static readonly Dictionary<string, string> Aliases = new Dictionary<string, string>(StringComparer.Ordinal)

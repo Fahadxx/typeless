@@ -28,6 +28,9 @@ namespace Typeless
             Directory.CreateDirectory(work);
             try
             {
+                // Models name their own outputs (an obj can bring its mtl) and verify before moving.
+                if (kind == Kind.Model) return ModelBackend.Convert(src, target, work);
+
                 List<string> temps = kind switch
                 {
                     Kind.Image => ImageBackend.Convert(src, target, work),
