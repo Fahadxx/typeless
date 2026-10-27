@@ -73,7 +73,7 @@ namespace Typeless
             AutomationElementCollection all = window.FindAll(TreeScope.Descendants, Condition.TrueCondition);
 
             var text = new StringBuilder();
-            AutomationElement? ok = null, yes = null, dontShow = null;
+            AutomationElement? ok = null, no = null, dontShow = null;
             foreach (AutomationElement el in all)
             {
                 string elName;
@@ -89,7 +89,7 @@ namespace Typeless
                 if (type == ControlType.Button)
                 {
                     if (label.Equals("OK", StringComparison.OrdinalIgnoreCase)) ok = el;
-                    else if (label.Equals("Yes", StringComparison.OrdinalIgnoreCase)) yes = el;
+                    else if (label.Equals("No", StringComparison.OrdinalIgnoreCase)) no = el;
                 }
                 else if (type == ControlType.CheckBox)
                 {
@@ -108,10 +108,12 @@ namespace Typeless
                 if (TryInvoke(ok))
                     Log.Write($"WordDialogWatchdog: dismissed PDF conversion notice ({processName}).");
             }
-            else if (Contains(body, "caused a serious error") && Contains(body, "still want to open") && yes != null)
+            else if (Contains(body, "caused a serious error") && Contains(body, "still want to open") && no != null)
             {
-                if (TryInvoke(yes))
-                    Log.Write($"WordDialogWatchdog: answered Yes to serious error prompt ({processName}).");
+                // A file that already crashed Word is not opened again (it may be crafted to do that);
+                // the open fails and the conversion falls back to LibreOffice.
+                if (TryInvoke(no))
+                    Log.Write($"WordDialogWatchdog: answered No to serious error prompt ({processName}).");
             }
         }
 

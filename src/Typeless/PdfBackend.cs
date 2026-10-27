@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 using Windows.Data.Pdf;
 using Windows.Storage;
 using Windows.Storage.Streams;
@@ -32,16 +33,42 @@ namespace Typeless
             }
         }
 
+        // Render caps in output pixels: about 50 MP per page and 16384 px per side (huge MediaBoxes used tens of GB).
+        private const double MaxRenderPixels = 50e6;
+        private const double MaxRenderSide = 16384;
+
+        [DllImport("user32.dll")]
+        private static extern uint GetDpiForSystem();
+
+        // The renderer sizes its output in DIPs times the system scale (measured: 2x at 192 dpi), so the caps
+        // divide by it.
+        private static double SystemScale()
+        {
+            try { return Math.Max(1, GetDpiForSystem() / 96.0); } catch { return 1; }
+        }
+
         // Renders every page at 2x (about 192 dpi) to work\page_NNNN.png or .jpg, in page order.
+        // Large pages render smaller (MaxRenderPixels, MaxRenderSide), keeping the aspect ratio.
         public static List<string> RenderPages(string pdfPath, string target, string work)
         {
             if (target != "png" && target != "jpg")
                 throw new NotSupportedException($"Page render target not supported: {target}");
 
+            // StorageFile cannot open paths over MAX_PATH, so open a copy in work (a short temp path) unless the
+            // file is already there (OfficeBackend's intermediate PDF).
+            string full = Path.GetFullPath(pdfPath);
+            string open = full;
+            if (!string.Equals(Path.GetDirectoryName(full), Path.TrimEndingDirectorySeparator(Path.GetFullPath(work)),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                open = Path.Combine(work, "render_source.pdf");
+                File.Copy(full, open, overwrite: true);
+            }
+
             PdfDocument doc;
             try
             {
-                StorageFile file = StorageFile.GetFileFromPathAsync(Path.GetFullPath(pdfPath)).AsTask().GetAwaiter().GetResult();
+                StorageFile file = StorageFile.GetFileFromPathAsync(open).AsTask().GetAwaiter().GetResult();
                 doc = PdfDocument.LoadFromFileAsync(file).AsTask().GetAwaiter().GetResult();
             }
             catch (Exception ex)
@@ -54,6 +81,7 @@ namespace Typeless
             if (doc.IsPasswordProtected)
                 throw new InvalidOperationException($"{Path.GetFileName(pdfPath)} is password protected.");
 
+            double k = SystemScale();
             var outputs = new List<string>((int)doc.PageCount);
             for (uint i = 0; i < doc.PageCount; i++)
             {
@@ -61,9 +89,15 @@ namespace Typeless
                 using (PdfPage page = doc.GetPage(i))
                 using (var ras = new InMemoryRandomAccessStream())
                 {
+                    // 2x the page size in DIPs, shrunk uniformly when the output would pass the caps.
+                    double w = Math.Max(1, page.Size.Width) * 2, h = Math.Max(1, page.Size.Height) * 2;
+                    double fit = Math.Min(Math.Min(1, Math.Sqrt(MaxRenderPixels / (w * k * h * k))),
+                        Math.Min(MaxRenderSide / (w * k), MaxRenderSide / (h * k)));
+                    double side = Math.Max(1, Math.Floor(MaxRenderSide / k));
                     var options = new PdfPageRenderOptions
                     {
-                        DestinationWidth = (uint)Math.Max(1, Math.Round(page.Size.Width * 2)),
+                        DestinationWidth = (uint)Math.Clamp(Math.Round(w * fit), 1, side),
+                        DestinationHeight = (uint)Math.Clamp(Math.Round(h * fit), 1, side),
                     };
                     page.RenderToStreamAsync(ras, options).AsTask().GetAwaiter().GetResult();
 

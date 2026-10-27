@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -676,10 +677,12 @@ namespace Typeless
             string file = path;
             int d = deg;
             bool h = hflip;
+            saveCts = new CancellationTokenSource();
+            CancellationToken ct = saveCts.Token;
             try
             {
                 string outPath = isVideo
-                    ? await Task.Run(() => MediaBackend.Transform(file, d, h, false))
+                    ? await Task.Run(() => MediaBackend.Transform(file, d, h, false, ct))
                     : await Converter.RunSta(() => ImageBackend.Transform(file, d, h, false));
                 busy = false;
                 saved = true;
@@ -692,6 +695,14 @@ namespace Typeless
                 ShowStatus("", OkColor, "Saved", IOPath.GetFileName(outPath));
                 await Task.Delay(700);
                 CloseAnimated();
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // Cancel or Esc while saving: ffmpeg was killed and nothing is saved.
+                busy = false;
+                ExitCode = 1;
+                Log.Write($"Rotate cancelled: {path}");
+                Close();
             }
             catch (Exception ex)
             {
@@ -738,10 +749,14 @@ namespace Typeless
             catch { }
         }
 
+        // Closing while a save runs cancels it (the ffmpeg encode is killed); the window closes once it stops.
+        private CancellationTokenSource? saveCts;
+
         private void HideWhileBusy()
         {
             hiddenWhileBusy = true;
             if (IsVisible) Hide();
+            try { saveCts?.Cancel(); } catch { }
         }
 
         private void CloseAnimated()

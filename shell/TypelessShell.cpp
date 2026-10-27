@@ -190,8 +190,10 @@ public:
                 return E_FAIL;
             }
 
-            std::wstring cmd;
-            AppendQuoted(cmd, exe);
+            std::wstring head;
+            AppendQuoted(head, exe);
+            std::wstring cmd = head;
+            bool hasPaths = false;
 
             DWORD count = 0;
             HRESULT hr = items->GetCount(&count);
@@ -216,27 +218,29 @@ public:
                 }
                 std::wstring p(path);
                 CoTaskMemFree(path);
-                cmd += L' ';
-                AppendQuoted(cmd, p);
+                std::wstring arg = L" ";
+                AppendQuoted(arg, p);
+                // CreateProcess caps the command line at 32767 chars. A big
+                // selection goes out in several launches; SingleInstance
+                // forwards the later ones into the first radial.
+                if (hasPaths && cmd.size() + arg.size() > kMaxCommandLine)
+                {
+                    hr = Launch(exe, cmd);
+                    if (FAILED(hr))
+                    {
+                        return hr;
+                    }
+                    cmd = head;
+                }
+                if (head.size() + arg.size() > kMaxCommandLine)
+                {
+                    continue;
+                }
+                cmd += arg;
+                hasPaths = true;
             }
 
-            std::vector<wchar_t> buffer(cmd.begin(), cmd.end());
-            buffer.push_back(L'\0');
-
-            STARTUPINFOW si = {};
-            si.cb = sizeof(si);
-            PROCESS_INFORMATION pi = {};
-
-            if (!CreateProcessW(exe.c_str(), buffer.data(), nullptr, nullptr, FALSE, 0,
-                                nullptr, nullptr, &si, &pi))
-            {
-                return HRESULT_FROM_WIN32(GetLastError());
-            }
-
-            AllowSetForegroundWindow(pi.dwProcessId);
-            CloseHandle(pi.hThread);
-            CloseHandle(pi.hProcess);
-            return S_OK;
+            return hasPaths ? Launch(exe, cmd) : S_OK;
         }
         catch (...)
         {
@@ -293,6 +297,29 @@ public:
     }
 
 private:
+    static const size_t kMaxCommandLine = 32000;
+
+    static HRESULT Launch(const std::wstring& exe, const std::wstring& cmd)
+    {
+        std::vector<wchar_t> buffer(cmd.begin(), cmd.end());
+        buffer.push_back(L'\0');
+
+        STARTUPINFOW si = {};
+        si.cb = sizeof(si);
+        PROCESS_INFORMATION pi = {};
+
+        if (!CreateProcessW(exe.c_str(), buffer.data(), nullptr, nullptr, FALSE, 0,
+                            nullptr, nullptr, &si, &pi))
+        {
+            return HRESULT_FROM_WIN32(GetLastError());
+        }
+
+        AllowSetForegroundWindow(pi.dwProcessId);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        return S_OK;
+    }
+
     ~TypelessCommand()
     {
         if (m_site)

@@ -130,7 +130,7 @@ namespace Typeless
         // Cuts [start, end] (seconds) into <stem>_trim.<ext> next to src, same container.
         // Copy mode starts on the keyframe at or before start (callers snap for video);
         // exact mode re-encodes video. Audio is always copied, which already cuts exactly.
-        public static string Trim(string src, double start, double end, bool exact)
+        public static string Trim(string src, double start, double end, bool exact, CancellationToken ct = default)
         {
             src = Path.GetFullPath(src);
             if (!File.Exists(src)) throw new FileNotFoundException($"File not found: {src}", src);
@@ -162,7 +162,7 @@ namespace Typeless
                 string output = Path.Combine(work, "out" + Path.GetExtension(src));
                 string from = Secs(start), to = Secs(end);
                 RunAttempts(ffmpeg, new[] { "-ss", from, "-to", to, "-i", src }, attempts,
-                    Faststart(container), output, $"{src} {from}-{to}");
+                    Faststart(container), output, $"{src} {from}-{to}", ct: ct);
 
                 string dest = Naming.WithSuffix(src, "trim");
                 File.Move(output, dest);
@@ -221,7 +221,7 @@ namespace Typeless
         // <stem>_rotated.<ext>, same container. mp4/mov/m4v first try a lossless stream copy that only
         // rewrites the display matrix; other containers, a failed copy, or an unreadable current
         // rotation re-encode with hflip/transpose at ReencodeAttempts quality.
-        public static string Transform(string src, int rotate, bool flipH, bool flipV)
+        public static string Transform(string src, int rotate, bool flipH, bool flipV, CancellationToken ct = default)
         {
             src = Path.GetFullPath(src);
             if (!File.Exists(src)) throw new FileNotFoundException($"File not found: {src}", src);
@@ -246,7 +246,7 @@ namespace Typeless
                     {
                         RunAttempts(ffmpeg, DisplayMatrixInput(src, spec, existing),
                             new List<Attempt> { new Attempt("rotate copy", new[] { "-map", "0", "-c", "copy" }) },
-                            Faststart(container), output, what);
+                            Faststart(container), output, what, ct: ct);
                         copied = true;
                     }
                     catch (InvalidOperationException ex)
@@ -263,7 +263,7 @@ namespace Typeless
                 {
                     RunAttempts(ffmpeg, new[] { "-i", src },
                         ReencodeAttempts(container, "rotate reencode", RotateFilter(spec)),
-                        Faststart(container), output, what);
+                        Faststart(container), output, what, ct: ct);
                 }
 
                 string dest = Naming.WithSuffix(src, "rotated");

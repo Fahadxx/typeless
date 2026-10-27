@@ -7,6 +7,7 @@ namespace Typeless
     public static class Log
     {
         private static readonly object Gate = new object();
+        private const long MaxBytes = 1 << 20;
 
         public static string AppDataDir { get; } = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Typeless");
@@ -22,6 +23,10 @@ namespace Typeless
                 lock (Gate)
                 {
                     Directory.CreateDirectory(AppDataDir);
+                    // Keep one older log, so the log never grows past about 2 MB in all.
+                    var info = new FileInfo(FilePath);
+                    if (info.Exists && info.Length > MaxBytes)
+                        File.Move(FilePath, FilePath + ".1", overwrite: true);
                     File.AppendAllText(FilePath, line);
                 }
             }

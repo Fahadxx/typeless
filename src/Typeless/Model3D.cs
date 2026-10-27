@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -39,6 +39,25 @@ namespace Typeless
     public sealed class Scene
     {
         public List<Part> Parts { get; } = new List<Part>();
+
+        // Caps for one read. A tiny file can instance one mesh millions of times (glb node DAGs,
+        // 3mf components) or declare huge counts; past these the read fails instead of eating all memory.
+        public const long MaxTriangles = 50_000_000;
+        public const long MaxVertices = 50_000_000;
+        private const long MaxSteps = 500_000;
+        private long triangles, vertices, steps;
+
+        // Counts one node or component visit; throws past MaxSteps.
+        public void Step()
+        {
+            if (++steps > MaxSteps) throw new InvalidDataException("The model has too many nodes or components.");
+        }
+
+        // Throws when a count read from a file header is past the caps, before anything is allocated for it.
+        public static void CheckCount(long count, long max)
+        {
+            if (count < 0 || count > max) throw new InvalidDataException("The model is too large.");
+        }
 
         // What the reader or writer could not keep (textures, uvs, ...), for the log.
         public List<string> Dropped { get; } = new List<string>();
@@ -106,6 +125,7 @@ namespace Typeless
         // Triangles that reference a vertex out of range throw; empty parts are skipped.
         public void AddPart(string name, IReadOnlyList<double> xyz, IReadOnlyList<int> triangles, Rgba? color)
         {
+            CheckCount(xyz.Count / 3, MaxVertices);
             var pos = new float[xyz.Count];
             for (int i = 0; i < pos.Length; i++) pos[i] = (float)xyz[i];
             AddPart(name, pos, triangles, color);
@@ -116,6 +136,12 @@ namespace Typeless
             if (triangles.Count < 3) return;
             if (triangles.Count % 3 != 0) throw new InvalidDataException("Triangle index count is not a multiple of 3.");
             int vertices = xyz.Count / 3;
+            this.triangles += triangles.Count / 3;
+            this.vertices += vertices;
+            if (this.triangles > MaxTriangles || this.vertices > MaxVertices)
+                throw new InvalidDataException("The model is too large.");
+            for (int i = 0; i < vertices * 3; i++)
+                if (!float.IsFinite(xyz[i])) throw new InvalidDataException("The model has invalid coordinates.");
             var tris = new int[triangles.Count];
             for (int i = 0; i < tris.Length; i++)
             {

@@ -15,6 +15,8 @@ namespace Typeless
     {
         private const string MutexName = @"Local\Typeless.Radial";
         private const int ConnectTimeoutMs = 1500;
+        private const int MaxPaths = 10000;
+        private const int MaxPathLength = 32767;
 
         private static readonly string PipeName = "Typeless.Radial." + Process.GetCurrentProcess().SessionId;
 
@@ -50,7 +52,7 @@ namespace Typeless
         {
             try
             {
-                using var client = new NamedPipeClientStream(".", PipeName, PipeDirection.Out);
+                using var client = new NamedPipeClientStream(".", PipeName, PipeDirection.Out, PipeOptions.CurrentUserOnly);
                 client.Connect(ConnectTimeoutMs);
                 using var writer = new StreamWriter(client, new UTF8Encoding(false));
                 foreach (string p in paths) writer.WriteLine(p);
@@ -79,7 +81,7 @@ namespace Typeless
                 try
                 {
                     server = new NamedPipeServerStream(PipeName, PipeDirection.In,
-                        NamedPipeServerStream.MaxAllowedServerInstances, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                        NamedPipeServerStream.MaxAllowedServerInstances, PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
                 }
                 catch (Exception ex)
                 {
@@ -110,10 +112,14 @@ namespace Typeless
                 using (var reader = new StreamReader(server, new UTF8Encoding(false)))
                 {
                     string? line;
-                    while ((line = reader.ReadLine()) != null)
+                    int count = 0;
+                    while ((line = reader.ReadLine()) != null && count < MaxPaths)
                     {
                         line = line.Trim();
-                        if (line.Length > 0) onPath(line);
+                        // Senders resolve full paths first; anything else is not a file from Explorer.
+                        if (line.Length == 0 || line.Length > MaxPathLength || !Path.IsPathFullyQualified(line)) continue;
+                        onPath(line);
+                        count++;
                     }
                 }
             }

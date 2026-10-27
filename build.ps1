@@ -2,7 +2,14 @@ param(
     [ValidateSet('none', 'patch', 'minor', 'major')]
     [string]$Bump = 'none',
     [switch]$NoInstall,
-    [switch]$NoPackage
+    [switch]$NoPackage,
+    # Build output only (CI and installer builds): app plus unsigned Typeless.msix in out\<arch> (or -OutDir).
+    [switch]$Package,
+    [ValidateSet('x64', 'arm64')]
+    [string]$Arch,
+    [switch]$SelfContained,
+    [string]$Publisher = 'CN=Typeless Dev',
+    [string]$OutDir
 )
 
 $ErrorActionPreference = 'Stop'
@@ -40,23 +47,54 @@ if ($Bump -ne 'none') {
     Write-Host "Bumped version to $version"
 }
 
-$arch = 'x64'
-if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -eq 'ARM64') { $arch = 'arm64' }
+# The machine's own architecture: an emulated x64 shell on ARM64 reports AMD64 in its environment.
+$hostArch = 'x64'
+$nativeArch = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment').PROCESSOR_ARCHITECTURE
+if ($nativeArch -eq 'ARM64') { $hostArch = 'arm64' }
+# $Arch and $arch are the same variable (PowerShell names ignore case).
+if (-not $Arch) { $Arch = $hostArch }
 
-Get-Process Typeless -ErrorAction SilentlyContinue | Stop-Process -Force
-
-# Remove a previous package first so the surrogate dllhost releases TypelessShell.dll.
-$existingPkg = Get-AppxPackage -Name Typeless -ErrorAction SilentlyContinue
-if ($existingPkg) {
-    Write-Host "Removing previous Typeless package"
-    $existingPkg | Remove-AppxPackage
-}
+if ($Package) { $NoInstall = $true }
+if (-not $Package -and $Publisher -ne 'CN=Typeless Dev') { throw "-Publisher needs -Package; local installs are signed with CN=Typeless Dev." }
 
 $typelessDir = Join-Path $env:LOCALAPPDATA 'Typeless'
-$appDir = Join-Path $typelessDir 'app'
 $project = Join-Path $root 'src\Typeless\Typeless.csproj'
 
-dotnet publish $project -c Release -o $appDir
+if ($NoInstall) {
+    # Never touch the installed copy.
+    if ($OutDir) { $appDir = [IO.Path]::GetFullPath($OutDir) } else { $appDir = Join-Path $root "out\$arch" }
+    if (Test-Path $appDir) { Remove-Item -Recurse -Force $appDir }
+} else {
+    $appDir = Join-Path $typelessDir 'app'
+    Get-Process Typeless -ErrorAction SilentlyContinue | Stop-Process -Force
+
+    # Remove a previous package first so the surrogate dllhost releases TypelessShell.dll.
+    $existingPkg = Get-AppxPackage -Name Typeless -ErrorAction SilentlyContinue
+    if ($existingPkg) {
+        Write-Host "Removing previous Typeless package"
+        $existingPkg | Remove-AppxPackage
+    }
+    # Older builds kept these next to the app folder.
+    foreach ($old in @((Join-Path $typelessDir 'Typeless.msix'), (Join-Path $typelessDir 'pkg'))) {
+        if (Test-Path $old) { Remove-Item -Recurse -Force $old }
+    }
+    # Start from an empty folder: a self-contained install leaves hostfxr.dll and the runtime behind, which
+    # breaks a framework-dependent exe. A dev build replaces an installer install, so drop its Apps entry too.
+    if (Test-Path $appDir) {
+        try {
+            Remove-Item -Recurse -Force $appDir
+        } catch {
+            Start-Sleep -Seconds 1
+            Remove-Item -Recurse -Force $appDir
+        }
+    }
+    $setupKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{80258A07-5649-4B6B-BE32-71B949A51C74}_is1'
+    if (Test-Path $setupKey) { Remove-Item -Recurse -Force $setupKey }
+}
+
+$sc = 'false'
+if ($SelfContained) { $sc = 'true' }
+dotnet publish $project -c Release -r "win-$arch" --self-contained $sc -o $appDir
 if ($LASTEXITCODE -ne 0) {
     Write-Error "dotnet publish failed with exit code $LASTEXITCODE"
     exit $LASTEXITCODE
@@ -86,32 +124,42 @@ try {
     Copy-Item -Path $dllSrc -Destination $dllDst -Force
 }
 
-if ($NoInstall) {
+if ($NoInstall -and -not $Package) {
     Write-Host "Typeless $version published to $appDir"
     exit 0
 }
 
-# Classic verbs first, so a fallback always exists.
-Start-Process -FilePath $exe -ArgumentList '--install' -Wait
-
 if ($NoPackage) {
+    Start-Process -FilePath $exe -ArgumentList '--install' -Wait
     Write-Host "Typeless $version installed to $appDir (classic menu only, -NoPackage)"
     exit 0
 }
 
 function Skip-Package([string]$reason) {
+    if ($Package) { throw $reason }
+    Start-Process -FilePath $exe -ArgumentList '--install' -Wait
     Write-Warning "$reason Top-level menu skipped; the classic 'Show more options' entry stays."
     Write-Host "Typeless $version installed to $appDir"
     exit 0
 }
 
-# Package layout
-$pkgDir = Join-Path $typelessDir 'pkg'
+# Package layout, staged outside the app folder
+$pkgDir = Join-Path ([IO.Path]::GetTempPath()) "typeless-pkg-$arch"
 if (Test-Path $pkgDir) { Remove-Item -Recurse -Force $pkgDir }
 $assetsDir = Join-Path $pkgDir 'Assets'
 New-Item -ItemType Directory -Force -Path $assetsDir | Out-Null
 
-$exts = (& $exe --list-extensions | Out-String) -split "\r?\n" | Where-Object { $_.Trim() }
+# The menu extensions come from the app itself. An arm64 exe cannot run on an x64 host and a
+# framework-dependent x64 exe needs the x64 runtime, so those build a throwaway host copy to ask.
+$listExe = $exe
+if ($arch -ne $hostArch -and ($hostArch -eq 'x64' -or -not $SelfContained)) {
+    $listDir = Join-Path ([IO.Path]::GetTempPath()) 'typeless-list'
+    if (Test-Path $listDir) { Remove-Item -Recurse -Force $listDir }
+    dotnet publish $project -c Release -r "win-$hostArch" --self-contained false -p:PublishReadyToRun=false -o $listDir | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Host publish for --list-extensions failed with exit code $LASTEXITCODE" }
+    $listExe = Join-Path $listDir 'Typeless.exe'
+}
+$exts = (& $listExe --list-extensions | Out-String) -split "\r?\n" | Where-Object { $_.Trim() }
 if (-not $exts) { throw "Typeless.exe --list-extensions returned nothing" }
 $itemLines = @()
 foreach ($e in $exts) {
@@ -120,7 +168,7 @@ foreach ($e in $exts) {
 }
 
 $template = [IO.File]::ReadAllText((Join-Path $root 'package\AppxManifest.template.xml'))
-$manifest = $template.Replace('{VERSION}', "$version.0").Replace('{ARCH}', $arch).Replace('{ITEMTYPES}', ($itemLines -join "`r`n"))
+$manifest = $template.Replace('{VERSION}', "$version.0").Replace('{ARCH}', $arch).Replace('{PUBLISHER}', [Security.SecurityElement]::Escape($Publisher)).Replace('{ITEMTYPES}', ($itemLines -join "`r`n"))
 [IO.File]::WriteAllText((Join-Path $pkgDir 'AppxManifest.xml'), $manifest, $utf8NoBom)
 
 # Logo assets from the app icon
@@ -148,9 +196,7 @@ foreach ($a in $assets) {
 $srcBmp.Dispose()
 $icon.Dispose()
 
-# Windows SDK tools
-$toolArch = 'x64'
-if ($arch -eq 'arm64') { $toolArch = 'arm64' }
+# Windows SDK tools (host binaries)
 $kitsBin = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
 $sdkDirs = @()
 if (Test-Path $kitsBin) {
@@ -158,7 +204,7 @@ if (Test-Path $kitsBin) {
 }
 $makeappx = $null
 $signtool = $null
-foreach ($candidateArch in @($toolArch, 'x64')) {
+foreach ($candidateArch in @($hostArch, 'x64')) {
     foreach ($d in $sdkDirs) {
         $m = Join-Path $d.FullName "$candidateArch\makeappx.exe"
         $s = Join-Path $d.FullName "$candidateArch\signtool.exe"
@@ -168,11 +214,17 @@ foreach ($candidateArch in @($toolArch, 'x64')) {
 }
 if (-not $makeappx) { Skip-Package "Windows SDK makeappx.exe/signtool.exe not found under $kitsBin." }
 
-$msix = Join-Path $typelessDir 'Typeless.msix'
-& $makeappx pack /o /nv /d $pkgDir /p $msix
+$msix = Join-Path $appDir 'Typeless.msix'
+& $makeappx pack /o /nv /d $pkgDir /p $msix | Out-Host
 if ($LASTEXITCODE -ne 0) {
     Write-Error "makeappx pack failed with exit code $LASTEXITCODE"
     exit $LASTEXITCODE
+}
+Remove-Item -Recurse -Force $pkgDir
+
+if ($Package) {
+    Write-Host "Typeless $version ($arch) built to $appDir with an unsigned Typeless.msix (publisher $Publisher)"
+    exit 0
 }
 
 # Signing certificate
@@ -216,15 +268,12 @@ if (-not (Test-Path $trustedPath)) {
     }
 }
 
-# Register the sparse package
-try {
-    Add-AppxPackage -Path $msix -ExternalLocation $appDir
-    # The package replaces the classic verbs.
-    Start-Process -FilePath $exe -ArgumentList '--uninstall-verbs' -Wait
+# Classic verbs, then the sparse package, which replaces them once it registers.
+$reg = & $exe --register | Out-String
+if ($reg -match 'menu=top-level') {
     Write-Host "Top-level menu registered"
-} catch {
-    Write-Warning "Add-AppxPackage failed: $($_.Exception.Message)"
-    Write-Warning "Keeping the classic 'Show more options' entry."
+} else {
+    Write-Warning "The package did not register (see $typelessDir\typeless.log). Keeping the classic 'Show more options' entry."
 }
 
 Write-Host "Typeless $version installed to $appDir"

@@ -1,0 +1,161 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    permissions:
+      contents: read
+      actions: read # SignPath reads the job and downloads the unsigned artifact
+    env:
+      # secrets.* cannot be used in a step `if:`, so expose whether signing is set up.
+      HAS_SIGNPATH: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+      # The exact subject of the SignPath Foundation certificate once issued; the dev name until then.
+      PUBLISHER: ${{ vars.PUBLISHER || 'CN=Typeless Dev' }}
+      INNO_URL: https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe
+      INNO_SHA256: 9c73c3bae7ed48d44112a0f48e66742c00090bdb5bef71d9d3c056c66e97b732
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Check VERSION matches the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: powershell
+        run: |
+          $v = (Get-Content VERSION -Raw).Trim()
+          if ("v$v" -ne $env:GITHUB_REF_NAME) { throw "VERSION is $v but the tag is $env:GITHUB_REF_NAME" }
+
+      - name: Install Inno Setup
+        shell: powershell
+        run: |
+          $exe = Join-Path $env:RUNNER_TEMP 'innosetup.exe'
+          Invoke-WebRequest $env:INNO_URL -OutFile $exe
+          if ((Get-FileHash $exe -Algorithm SHA256).Hash -ne $env:INNO_SHA256) { throw 'Inno Setup download hash mismatch' }
+          $dir = Join-Path $env:RUNNER_TEMP 'inno'
+          Start-Process $exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER', "/DIR=$dir" -Wait
+          if (-not (Test-Path "$dir\ISCC.exe")) { throw 'ISCC.exe not found after install' }
+          # Windows PowerShell writes >> as UTF-16; GITHUB_ENV must be UTF-8.
+          [IO.File]::AppendAllText($env:GITHUB_ENV, "ISCC=$dir\ISCC.exe`n")
+
+      - name: Build app, shell DLL and package
+        shell: powershell
+        run: ./build.ps1 -Package -SelfContained -Arch ${{ matrix.arch }} -Publisher $env:PUBLISHER
+
+      - name: Upload files to sign
+        id: unsigned
+        if: env.HAS_SIGNPATH == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unsigned-${{ matrix.arch }}
+          path: |
+            out/${{ matrix.arch }}/Typeless.exe
+            out/${{ matrix.arch }}/Typeless.dll
+            out/${{ matrix.arch }}/TypelessShell.dll
+            out/${{ matrix.arch }}/Typeless.msix
+          if-no-files-found: error
+
+      - name: Sign app files (SignPath, manual approval)
+        if: env.HAS_SIGNPATH == 'true'
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'typeless' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG || 'release-signing' }}
+          artifact-configuration-slug: app
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 86400
+          output-artifact-directory: signed
+
+      - name: Use the signed files
+        if: env.HAS_SIGNPATH == 'true'
+        shell: powershell
+        run: Copy-Item signed\* out\${{ matrix.arch }}\ -Force
+
+      - name: Build installer
+        shell: powershell
+        run: |
+          & $env:ISCC /Qp installer\Typeless.iss /DArch=${{ matrix.arch }}
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
+          Get-ChildItem out\TypelessSetup-*.exe | Format-Table Name, Length
+
+      - name: Upload installer to sign
+        id: unsigned-setup
+        if: env.HAS_SIGNPATH == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unsigned-setup-${{ matrix.arch }}
+          path: out/TypelessSetup-*.exe
+          if-no-files-found: error
+
+      - name: Sign installer (SignPath, manual approval)
+        if: env.HAS_SIGNPATH == 'true'
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'typeless' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG || 'release-signing' }}
+          artifact-configuration-slug: installer
+          github-artifact-id: ${{ steps.unsigned-setup.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 86400
+          output-artifact-directory: signed-setup
+
+      - name: Use the signed installer
+        if: env.HAS_SIGNPATH == 'true'
+        shell: powershell
+        run: Copy-Item signed-setup\TypelessSetup-*.exe out\ -Force
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: setup-${{ matrix.arch }}
+          path: out/TypelessSetup-*.exe
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: setup-*
+          merge-multiple: true
+          path: dist
+
+      - name: Draft the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="$(tr -d '[:space:]' < VERSION)"
+          # This version's CHANGELOG section, without its heading.
+          awk -v h="## $v" '$0 == h { on = 1; next } on && /^## / { exit } on' CHANGELOG.md > notes.md
+          cd dist
+          sha256sum TypelessSetup-*.exe > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft \
+            --title "Typeless $v" --notes-file ../notes.md TypelessSetup-*.exe SHA256SUMS.txt

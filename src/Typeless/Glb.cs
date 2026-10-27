@@ -40,6 +40,8 @@ namespace Typeless
             0, 0, 0, 1,
         };
 
+        private const int MaxDepth = 256;
+
         private sealed class Reader
         {
             public byte[] Data = Array.Empty<byte>();
@@ -204,6 +206,8 @@ namespace Typeless
         // Depth first; parent maps this node's parent space to world millimeters.
         private static void Visit(Reader rd, int index, double[] parent, HashSet<int> path)
         {
+            rd.Scene.Step();
+            if (path.Count >= MaxDepth) throw new InvalidDataException("nodes nest too deep");
             if (!path.Add(index)) throw new InvalidDataException($"node {index} is its own ancestor");
             JsonElement node = Item(rd.Nodes, index, "node");
             double[] world = Mul(parent, Local(node));
@@ -293,16 +297,22 @@ namespace Typeless
             if (componentType != 5126) throw new InvalidOperationException("Quantized glb is not supported");
             int count = ToInt(Prop(acc, "count") ?? throw new InvalidDataException("accessor without count"), "count");
             if (count < 0) throw new InvalidDataException("negative accessor count");
+            Scene.CheckCount(count, Scene.MaxVertices);
 
-            var raw = new float[(long)count * 3];
-            if (Prop(acc, "bufferView") is JsonElement bv)
+            JsonElement? bv = Prop(acc, "bufferView");
+            (byte[] bytes, int viewStart, int viewLength, int? viewStride) = bv is JsonElement b
+                ? View(rd, ToInt(b, "bufferView")) : (Array.Empty<byte>(), 0, 0, null);
+            long start = viewStart + (long)ByteOffset(acc);
+            int stride = viewStride ?? 12;
+            if (bv != null)
             {
-                (byte[] bytes, int viewStart, int viewLength, int? viewStride) = View(rd, ToInt(bv, "bufferView"));
-                long start = viewStart + (long)OptInt(acc, "byteOffset", 0);
-                int stride = viewStride ?? 12;
                 if (stride < 12) throw new InvalidDataException($"byteStride {stride} is smaller than a VEC3 float");
                 if (count > 0 && start + (long)(count - 1) * stride + 12 > (long)viewStart + viewLength)
                     throw new InvalidDataException($"accessor {accessorIndex} runs past its bufferView");
+            }
+            var raw = new float[(long)count * 3];
+            if (bv != null)
+            {
                 ReadOnlySpan<byte> span = bytes;
                 for (int v = 0; v < count; v++)
                 {
@@ -330,15 +340,16 @@ namespace Typeless
             };
             int count = ToInt(Prop(acc, "count") ?? throw new InvalidDataException("accessor without count"), "count");
             if (count < 0) throw new InvalidDataException("negative accessor count");
-            var idx = new int[count];
-            if (Prop(acc, "bufferView") is not JsonElement bv) return idx;
+            Scene.CheckCount(count / 3, Scene.MaxTriangles);
+            if (Prop(acc, "bufferView") is not JsonElement bv) return new int[count];
 
             (byte[] bytes, int viewStart, int viewLength, int? viewStride) = View(rd, ToInt(bv, "bufferView"));
-            long start = viewStart + (long)OptInt(acc, "byteOffset", 0);
+            long start = viewStart + (long)ByteOffset(acc);
             int stride = viewStride ?? size;
             if (stride < size) throw new InvalidDataException("index byteStride is smaller than the index size");
             if (count > 0 && start + (long)(count - 1) * stride + size > (long)viewStart + viewLength)
                 throw new InvalidDataException($"accessor {accessorIndex} runs past its bufferView");
+            var idx = new int[count];
             ReadOnlySpan<byte> span = bytes;
             for (int i = 0; i < count; i++)
             {
@@ -628,6 +639,13 @@ namespace Typeless
                 if (d == Math.Floor(d) && d >= int.MinValue && d <= int.MaxValue) return (int)d;
             }
             throw new InvalidDataException($"{what} is not an integer");
+        }
+
+        private static int ByteOffset(JsonElement acc)
+        {
+            int offset = OptInt(acc, "byteOffset", 0);
+            if (offset < 0) throw new InvalidDataException("negative accessor byteOffset");
+            return offset;
         }
 
         private static int OptInt(JsonElement e, string name, int def) =>

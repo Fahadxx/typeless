@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -1534,9 +1535,11 @@ namespace Typeless
             UpdatePlayUi();
 
             string file = path;
+            saveCts = new CancellationTokenSource();
+            CancellationToken ct = saveCts.Token;
             try
             {
-                string outPath = await Converter.RunSta(() => MediaBackend.Trim(file, s, e, cutExact));
+                string outPath = await Converter.RunSta(() => MediaBackend.Trim(file, s, e, cutExact, ct));
                 busy = false;
                 saved = true;
                 SetSaving(false);
@@ -1548,6 +1551,14 @@ namespace Typeless
                 ShowStatus("", OkColor, "Saved", IOPath.GetFileName(outPath));
                 await Task.Delay(700);
                 CloseAnimated();
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // Cancel or Esc while saving: ffmpeg was killed and nothing is saved.
+                busy = false;
+                ExitCode = 1;
+                Log.Write($"Trim cancelled: {path}");
+                Close();
             }
             catch (Exception ex)
             {
@@ -1582,10 +1593,14 @@ namespace Typeless
             status.Visibility = Visibility.Visible;
         }
 
+        // Closing while a save runs cancels it (the ffmpeg encode is killed); the window closes once it stops.
+        private CancellationTokenSource? saveCts;
+
         private void HideWhileBusy()
         {
             hiddenWhileBusy = true;
             if (IsVisible) Hide();
+            try { saveCts?.Cancel(); } catch { }
         }
 
         private void CloseAnimated()

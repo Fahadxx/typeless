@@ -39,3 +39,7 @@ tasks/
 
 # Separate repo (Typeless Board)
 typeless-board/
+
+# Launch video output (local only)
+brag-output*/
+out/

@@ -47,6 +47,28 @@ namespace Typeless
             }
         }
 
+        // Demuxers for every audio, video and image source Typeless takes. ffmpeg picks a demuxer by content,
+        // and some (dash, ffconcat, hls) open other files that a crafted "video" names, so a download could
+        // make ffmpeg read files elsewhere on disk or reach a \\host share. Inputs are limited to these.
+        private const string Demuxers =
+            "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,avi,asf,flv,mp3,wav,flac,aac,ogg,mpegts," +
+            "image2,png_pipe,jpeg_pipe,webp_pipe,bmp_pipe,tiff_pipe,gif,ico";
+
+        // ffprobe takes input options anywhere; ffmpeg needs them before each -i.
+        private static IEnumerable<string> Harden(string exe, IEnumerable<string> args)
+        {
+            string name = Path.GetFileNameWithoutExtension(exe);
+            bool probe = name.Equals("ffprobe", StringComparison.OrdinalIgnoreCase);
+            bool ffmpeg = name.Equals("ffmpeg", StringComparison.OrdinalIgnoreCase);
+            var guard = new[] { "-format_whitelist", Demuxers, "-protocol_whitelist", "file" };
+            if (probe) foreach (string g in guard) yield return g;
+            foreach (string a in args)
+            {
+                if (ffmpeg && a == "-i") foreach (string g in guard) yield return g;
+                yield return a;
+            }
+        }
+
         // Runs exe to completion and returns its stdout. Throws on timeout or nonzero exit.
         public static string RunProcess(string exe, IEnumerable<string> args, TimeSpan? timeout = null)
         {
@@ -58,8 +80,10 @@ namespace Typeless
                 RedirectStandardError = true,
                 StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding = Encoding.UTF8,
+                // Not the clicked file's folder, which may be an untrusted download folder.
+                WorkingDirectory = Path.GetTempPath(),
             };
-            foreach (string a in args) psi.ArgumentList.Add(a);
+            foreach (string a in Harden(exe, args)) psi.ArgumentList.Add(a);
 
             var stdout = new StringBuilder();
             var stderr = new StringBuilder();
@@ -68,6 +92,7 @@ namespace Typeless
             p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (stderr) stderr.AppendLine(e.Data); };
 
             p.Start();
+            ChildJob.Add(p);
             p.BeginOutputReadLine();
             p.BeginErrorReadLine();
 
@@ -111,8 +136,10 @@ namespace Typeless
                 RedirectStandardError = true,
                 StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding = Encoding.UTF8,
+                // Not the clicked file's folder, which may be an untrusted download folder.
+                WorkingDirectory = Path.GetTempPath(),
             };
-            foreach (string a in args) psi.ArgumentList.Add(a);
+            foreach (string a in Harden(exe, args)) psi.ArgumentList.Add(a);
 
             var stdout = new StringBuilder();
             var stderr = new StringBuilder();
@@ -131,6 +158,7 @@ namespace Typeless
             };
 
             p.Start();
+            ChildJob.Add(p);
             p.BeginOutputReadLine();
             p.BeginErrorReadLine();
             using (ct.Register(() => { try { p.Kill(entireProcessTree: true); } catch { } }))
@@ -254,7 +282,8 @@ namespace Typeless
             foreach (string raw in combined.Split(';'))
             {
                 string dir = Environment.ExpandEnvironmentVariables(raw.Trim().Trim('"'));
-                if (dir.Length == 0) continue;
+                // A relative entry such as "." would resolve against the clicked file's folder.
+                if (dir.Length == 0 || !Path.IsPathFullyQualified(dir)) continue;
                 string? hit = FirstExisting(SafeCombine(dir, exeName));
                 if (hit != null) return hit;
             }

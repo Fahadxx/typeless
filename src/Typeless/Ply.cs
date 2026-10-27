@@ -111,8 +111,7 @@ namespace Typeless
                                 scene.Drop("uvs"); break;
                         }
                     }
-                    if (e.Count > int.MaxValue / 3) throw new InvalidDataException("PLY: too many vertices.");
-                    positions.Capacity = (int)e.Count * 3;
+                    Scene.CheckCount(e.Count, Scene.MaxVertices);
                     var xyz = new float[3];
                     for (long i = 0; i < e.Count; i++)
                     {
@@ -138,7 +137,8 @@ namespace Typeless
                         if (p.Name is "red" or "green" or "blue" or "alpha") scene.Drop("ply face colors");
                         else if (p.Name == "texcoord") scene.Drop("uvs");
                     }
-                    for (long i = 0; i < e.Count; i++)
+                    if (e.Props.Count > 0) Scene.CheckCount(e.Count, Scene.MaxTriangles);
+                    for (long i = 0; i < e.Count && e.Props.Count > 0; i++)
                     {
                         for (int k = 0; k < e.Props.Count; k++)
                         {
@@ -152,7 +152,12 @@ namespace Typeless
                                 continue;
                             }
                             poly.Clear();
-                            for (long j = 0; j < n; j++) poly.Add(checked((int)body.Read(p.Type)));
+                            for (long j = 0; j < n; j++)
+                            {
+                                double vi = body.Read(p.Type);
+                                if (vi < 0 || vi > int.MaxValue) throw new InvalidDataException("PLY: vertex index out of range.");
+                                poly.Add((int)vi);
+                            }
                             for (int j = 1; j + 1 < poly.Count; j++)
                             {
                                 tris.Add(poly[0]);
@@ -165,7 +170,8 @@ namespace Typeless
                 else
                 {
                     if (e.Count > 0) scene.Drop($"ply {e.Name} elements");
-                    for (long i = 0; i < e.Count; i++)
+                    // An element without properties takes no bytes, so there is nothing to skip.
+                    for (long i = 0; i < e.Count && e.Props.Count > 0; i++)
                         foreach (Prop p in e.Props)
                         {
                             if (!p.IsList) { body.Read(p.Type); continue; }

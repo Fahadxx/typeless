@@ -5,6 +5,11 @@ namespace Typeless
 {
     internal static class NativeMethods
     {
+        public const uint LOAD_LIBRARY_SEARCH_DEFAULT_DIRS = 0x00001000;
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool SetDefaultDllDirectories(uint flags);
+
         [StructLayout(LayoutKind.Sequential)]
         public struct POINT
         {

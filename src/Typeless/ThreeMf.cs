@@ -426,6 +426,7 @@ namespace Typeless
         // components recurse with their transform applied first.
         private static void Emit(Reader rd, ModelFile file, string id, double[] m, string? inheritedName, int depth)
         {
+            rd.Scene.Step();
             if (depth > MaxDepth) throw new InvalidDataException("components nest too deep (cycle?)");
             if (!file.Objects.TryGetValue(id, out ObjDef? obj))
                 throw new InvalidDataException($"reference to missing object {id} in /{file.PartName}");

@@ -129,19 +129,30 @@ namespace Typeless
             return scene;
         }
 
+        // An mtl name as a path inside the obj's folder (or below it), else null. A downloaded obj must not
+        // make Typeless open a file elsewhere: an absolute or UNC path (\\host\share sends the user's
+        // credentials), a device path, or ../.
+        private static string? InDir(string dir, string name)
+        {
+            if (name.Length == 0 || Path.IsPathRooted(name) || name.Contains(':')) return null;
+            string root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(dir)) + Path.DirectorySeparatorChar;
+            string full = Path.GetFullPath(Path.Combine(root, name));
+            return full.StartsWith(root, StringComparison.OrdinalIgnoreCase) ? full : null;
+        }
+
         // The whole rest of the line is tried as one file name first (names have spaces), then split.
         private static void LoadMtl(string dir, string rest, Dictionary<string, Rgba?> materials, Scene scene)
         {
             if (rest.Length == 0) return;
             var files = new List<string>();
-            string whole = Path.Combine(dir, rest);
-            if (File.Exists(whole)) files.Add(whole);
+            string? whole = InDir(dir, rest);
+            if (whole != null && File.Exists(whole)) files.Add(whole);
             else
             {
                 foreach (string f in Split(rest))
                 {
-                    string p = Path.Combine(dir, f);
-                    if (File.Exists(p)) files.Add(p);
+                    string? p = InDir(dir, f);
+                    if (p != null && File.Exists(p)) files.Add(p);
                     else scene.Drop("missing mtl " + f);
                 }
             }

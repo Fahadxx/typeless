@@ -202,9 +202,11 @@ namespace Typeless
                     // Largest drawn size per image in points; images never seen are assumed to fill the page width.
                     var drawn = new Dictionary<PdfDictionary, (double W, double H)>(ReferenceEqualityComparer.Instance);
                     var contents = new List<PdfDictionary.PdfStream>();
+                    var budget = new ScanBudget(ct);
                     double pageWidth = 0;
                     for (int p = 0; p < doc.PageCount; p++)
                     {
+                        ct.ThrowIfCancellationRequested();
                         PdfPage page = doc.Pages[p];
                         if (Resolve(Inherited(page, "/MediaBox")) is PdfArray box && box.Elements.Count == 4)
                             pageWidth = Math.Max(pageWidth, Math.Abs(NumOf(box.Elements[2]) - NumOf(box.Elements[0])));
@@ -227,8 +229,11 @@ namespace Typeless
                                 ms.Write(b, 0, b.Length);
                                 ms.WriteByte((byte)'\n');
                             }
-                            ScanContent(ms.ToArray(), Resolve(Inherited(page, "/Resources")) as PdfDictionary,
-                                Matrix.Identity, drawn, 0, new HashSet<PdfDictionary>(ReferenceEqualityComparer.Instance));
+                            if (!budget.Exhausted && budget.Charge(ms.Length))
+                            {
+                                ScanContent(ms.ToArray(), Resolve(Inherited(page, "/Resources")) as PdfDictionary,
+                                    Matrix.Identity, drawn, 0, new HashSet<PdfDictionary>(ReferenceEqualityComparer.Instance), budget);
+                            }
                         }
                         catch (Exception ex) when (ex is not OperationCanceledException)
                         {
@@ -236,6 +241,14 @@ namespace Typeless
                         }
                     }
                     if (pageWidth <= 0) pageWidth = 612;
+
+                    // An unfinished scan knows no safe drawn size (unseen images would count as page width and seen
+                    // ones may be drawn larger later), so no image is re-encoded; content streams still get Flate.
+                    if (budget.Exhausted)
+                    {
+                        Log.Write($"Compress: content scan stopped at its budget in {src}, images kept as is");
+                        candidates.Clear();
+                    }
 
                     foreach (PdfDictionary img in candidates)
                     {
@@ -419,15 +432,17 @@ namespace Typeless
         // Minimal content stream walk: tracks the CTM over q, Q and cm, and records the drawn size of each
         // image on Do (unit square through the CTM). Form XObjects are entered with their /Matrix.
         // Strings, comments, hex strings and inline image data are skipped; anything else is ignored.
+        // Stops early once the shared budget runs out (forms drawing forms many times over).
         private static void ScanContent(byte[] data, PdfDictionary? resources, Matrix ctm,
-            Dictionary<PdfDictionary, (double W, double H)> drawn, int depth, HashSet<PdfDictionary> chain)
+            Dictionary<PdfDictionary, (double W, double H)> drawn, int depth, HashSet<PdfDictionary> chain, ScanBudget budget)
         {
             var stack = new Stack<Matrix>();
             var nums = new List<double>();
             string? name = null;
             int i = 0, len = data.Length;
-            while (i < len)
+            while (i < len && !budget.Exhausted)
             {
+                budget.Tick();
                 byte c = data[i];
                 if (IsWhite(c)) { i++; continue; }
                 if (c == '%')
@@ -484,7 +499,7 @@ namespace Typeless
                         break;
                     case "Do":
                         if (name != null && resources?.Elements.GetDictionary("/XObject")?.Elements.GetObject(name) is PdfDictionary x)
-                            DrawXObject(x, resources, ctm, drawn, depth, chain);
+                            DrawXObject(x, resources, ctm, drawn, depth, chain, budget);
                         break;
                     case "ID":
                         // Inline image data runs to whitespace + EI + whitespace (or the end).
@@ -501,7 +516,7 @@ namespace Typeless
         }
 
         private static void DrawXObject(PdfDictionary x, PdfDictionary? resources, Matrix ctm,
-            Dictionary<PdfDictionary, (double W, double H)> drawn, int depth, HashSet<PdfDictionary> chain)
+            Dictionary<PdfDictionary, (double W, double H)> drawn, int depth, HashSet<PdfDictionary> chain, ScanBudget budget)
         {
             string? subtype = NameOf(x.Elements["/Subtype"]);
             if (subtype == "/Image")
@@ -511,7 +526,7 @@ namespace Typeless
                 if (w < 0.01 || h < 0.01) return;
                 drawn[x] = drawn.TryGetValue(x, out var old) ? (Math.Max(old.W, w), Math.Max(old.H, h)) : (w, h);
             }
-            else if (subtype == "/Form" && x.Stream != null && depth < 8 && chain.Add(x))
+            else if (subtype == "/Form" && x.Stream != null && depth < 8 && budget.Charge(x.Stream.Length) && chain.Add(x))
             {
                 Matrix m = Matrix.Identity;
                 if (x.Elements.GetArray("/Matrix") is PdfArray a && a.Elements.Count == 6)
@@ -520,8 +535,46 @@ namespace Typeless
                         NumOf(a.Elements[3]), NumOf(a.Elements[4]), NumOf(a.Elements[5]));
                 }
                 PdfDictionary? res = x.Elements.GetDictionary("/Resources") ?? resources;
-                ScanContent(x.Stream.UnfilteredValue, res, Matrix.Multiply(m, ctm), drawn, depth + 1, chain);
+                byte[] data = x.Stream.UnfilteredValue;
+                if (budget.AddBytes(data.Length))
+                    ScanContent(data, res, Matrix.Multiply(m, ctm), drawn, depth + 1, chain, budget);
                 chain.Remove(x);
+            }
+        }
+
+        // Per-document cap on form XObject visits and content bytes scanned, so nested forms that each draw the
+        // next many times (40^8 scans) stop instead of hanging. Also polls the cancel token from the scan loop.
+        private sealed class ScanBudget
+        {
+            private const int MaxForms = 500_000;
+            private const long MaxBytes = 256L * 1024 * 1024;
+            private readonly CancellationToken ct;
+            private int forms, ticks;
+            private long bytes;
+
+            public ScanBudget(CancellationToken ct) => this.ct = ct;
+
+            public bool Exhausted { get; private set; }
+
+            // Counts one content stream (a page's or a form's, n stored bytes); false once over the budget.
+            public bool Charge(long n)
+            {
+                if (Exhausted) return false;
+                if (++forms > MaxForms) Exhausted = true;
+                return AddBytes(n);
+            }
+
+            // Counts n bytes about to be scanned (a form's decoded stream).
+            public bool AddBytes(long n)
+            {
+                bytes += Math.Max(0, n);
+                if (bytes > MaxBytes) Exhausted = true;
+                return !Exhausted;
+            }
+
+            public void Tick()
+            {
+                if ((++ticks & 0xFFF) == 0) ct.ThrowIfCancellationRequested();
             }
         }
 
@@ -573,12 +626,19 @@ namespace Typeless
 
         // Opens for page import (Compress uses Modify); shown is the user's file name in messages
         // (differs for image temp PDFs).
+        // Owner-restricted PDFs (opened with the empty user password) are refused in every mode, as Modify
+        // already does, so no edit strips the author's restrictions. The page tree is checked before doc.Pages.
         private static PdfDocument Open(string path, string? shown = null, PdfDocumentOpenMode mode = PdfDocumentOpenMode.Import)
         {
             string name = Path.GetFileName(shown ?? path);
+            // Modify mode flattens the page tree while opening, so a damaged tree is caught by an Import open first.
+            if (mode != PdfDocumentOpenMode.Import)
+                using (Open(path, shown)) { }
+
+            PdfDocument doc;
             try
             {
-                return PdfReader.Open(path, mode);
+                doc = PdfReader.Open(path, mode);
             }
             catch (Exception ex)
             {
@@ -587,6 +647,86 @@ namespace Typeless
                     throw new InvalidOperationException($"{name} is password protected.", ex);
                 throw new InvalidOperationException(
                     $"Cannot open {name}. It may be password protected or damaged.", ex);
+            }
+
+            try
+            {
+                if (!HasOwnerPermissions(doc) && !PermitsAssembly(doc))
+                    throw new InvalidOperationException($"{name} is password protected.");
+                CheckPageTree(doc);
+                return doc;
+            }
+            catch (Exception ex)
+            {
+                Log.Write($"PDF refused: {shown ?? path}: {ex.Message}");
+                doc.Dispose();
+                throw;
+            }
+        }
+
+        // PdfSecuritySettings.HasOwnerPermissions (false when an encrypted PDF opened with the user password)
+        // has an internal getter in PDFsharp 6.2.4, so it is read by reflection; if that ever fails, nothing is refused.
+        private static readonly System.Reflection.MethodInfo? OwnerPermissionsGetter =
+            typeof(PdfSharp.Pdf.Security.PdfSecuritySettings).GetProperty("HasOwnerPermissions")?.GetGetMethod(nonPublic: true);
+
+        private static bool HasOwnerPermissions(PdfDocument doc)
+        {
+            try
+            {
+                return OwnerPermissionsGetter?.Invoke(doc.SecuritySettings, null) is not false;
+            }
+            catch (Exception ex)
+            {
+                Log.Write($"PDF owner permission check failed: {ex.Message}");
+                return true;
+            }
+        }
+
+        // An owner password that still grants page assembly (most bank statements, invoices, tickets) does not
+        // stop Split, Pages or Merge; only one that forbids it does.
+        private static readonly System.Reflection.PropertyInfo? TrailerProperty = typeof(PdfDocument).GetProperty("Trailer",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
+
+        private static bool PermitsAssembly(PdfDocument doc)
+        {
+            // PDFsharp's Permit* getters return its own settings, not the file's, so read /P from /Encrypt:
+            // bit 4 (modify) or bit 11 (assemble) allows inserting, removing and rotating pages.
+            try
+            {
+                // PdfDocument.Trailer is internal in PDFsharp 6.2.4.
+                if (TrailerProperty?.GetValue(doc) is not PdfDictionary trailer
+                    || Resolve(trailer.Elements["/Encrypt"]) is not PdfDictionary encrypt) return false;
+                double p = NumOf(encrypt.Elements["/P"]);
+                if (double.IsNaN(p)) return false;
+                long bits = (long)p; // some writers store /P unsigned (4294967292 for -4)
+                return (bits & (1 << 3)) != 0 || (bits & (1 << 10)) != 0;
+            }
+            catch (Exception ex)
+            {
+                Log.Write($"PDF assembly permission check failed: {ex.Message}");
+                return false;
+            }
+        }
+
+        private const int MaxTreeDepth = 64;
+        private const int MaxTreeNodes = 2_000_000;
+
+        // PDFsharp flattens the page tree recursively and overflows the stack (uncatchable) on a /Kids cycle,
+        // so walk it first: every node with /Kids must be reached once, within depth and node caps.
+        private static void CheckPageTree(PdfDocument doc)
+        {
+            var seen = new HashSet<PdfDictionary>(ReferenceEqualityComparer.Instance);
+            int nodes = 0;
+            var stack = new Stack<(PdfDictionary Node, int Depth)>();
+            if (Resolve(doc.Internals.Catalog.Elements["/Pages"]) is PdfDictionary root) stack.Push((root, 0));
+            while (stack.Count > 0)
+            {
+                (PdfDictionary node, int depth) = stack.Pop();
+                if (++nodes > MaxTreeNodes) throw new InvalidDataException("The PDF's page tree is damaged.");
+                if (Resolve(node.Elements["/Kids"]) is not PdfArray kids) continue;
+                if (depth >= MaxTreeDepth || !seen.Add(node)) throw new InvalidDataException("The PDF's page tree is damaged.");
+                for (int i = 0; i < kids.Elements.Count; i++)
+                    if (Resolve(kids.Elements[i]) is PdfDictionary kid) stack.Push((kid, depth + 1));
             }
         }
 

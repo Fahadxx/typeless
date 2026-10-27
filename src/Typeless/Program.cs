@@ -13,6 +13,9 @@ namespace Typeless
         [STAThread]
         public static int Main(string[] args)
         {
+            // DLLs load from the app folder and System32 only, never from the clicked file's folder.
+            try { NativeMethods.SetDefaultDllDirectories(NativeMethods.LOAD_LIBRARY_SEARCH_DEFAULT_DIRS); } catch { }
+            AppDomain.CurrentDomain.UnhandledException += (_, e) => Log.Write("Unhandled: " + e.ExceptionObject);
             try
             {
                 return Run(args);
@@ -183,6 +186,18 @@ namespace Typeless
                 case "--uninstall-verbs":
                     Installer.UninstallVerbs();
                     return 0;
+
+                case "--register":
+                    return Setup.Register();
+
+                case "--unregister":
+                    return Setup.Unregister();
+
+                case "--shutdown":
+                    return Setup.Shutdown();
+
+                case "--backends":
+                    return Setup.Backends();
 
                 case "--help":
                 case "-h":
@@ -592,8 +607,11 @@ namespace Typeless
             }
         }
 
+        private const int MaxPlanPages = 100_000;
+
         // "3,1-2,5r90,6r180": pages or inclusive ranges (A-B with A > B runs descending),
         // each with an optional rotation r90, r180 or r270 applied to every page of the item.
+        // At most MaxPlanPages pages in total.
         internal static bool TryParsePageSpec(string spec, out List<(int Page, int Rotate)> plan)
         {
             plan = new List<(int Page, int Rotate)>();
@@ -615,6 +633,8 @@ namespace Typeless
                     || !int.TryParse(ends[0], NumberStyles.None, CultureInfo.InvariantCulture, out int a)
                     || !int.TryParse(ends[^1], NumberStyles.None, CultureInfo.InvariantCulture, out int b))
                     return false;
+                // Cap the plan before building it, so "1-2000000000" fails fast instead of filling memory.
+                if (plan.Count + Math.Abs((long)b - a) + 1 > MaxPlanPages) return false;
                 int step = a <= b ? 1 : -1;
                 for (int p = a; ; p += step)
                 {
@@ -883,6 +903,10 @@ namespace Typeless
             Console.WriteLine("  Typeless --install               Register the Explorer context menu");
             Console.WriteLine("  Typeless --uninstall             Remove the Explorer context menu");
             Console.WriteLine("  Typeless --uninstall-verbs       Remove only the classic context menu verbs");
+            Console.WriteLine("  Typeless --register              Add the menu: classic verbs, then the Windows 11 package from Typeless.msix (replaces the verbs); prints menu=top-level or menu=classic");
+            Console.WriteLine("  Typeless --unregister            Remove the Windows 11 package and the classic verbs");
+            Console.WriteLine("  Typeless --shutdown              Close other running Typeless from this folder (kill after 3 s)");
+            Console.WriteLine("  Typeless --backends              Print word=, powerpoint=, libreoffice=, ffmpeg=, ffprobe= (yes/no)");
             Console.WriteLine("  Typeless --version               Print the version");
         }
     }

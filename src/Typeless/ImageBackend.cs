@@ -176,7 +176,7 @@ namespace Typeless
             {
                 return Decode(path);
             }
-            catch (Exception ex) when (ex is not IOException && ex is not UnauthorizedAccessException)
+            catch (Exception ex) when (ex is not IOException && ex is not UnauthorizedAccessException && ex is not ImageTooLargeException)
             {
                 string? ffmpeg = Tools.Ffmpeg;
                 if (ffmpeg == null)
@@ -194,24 +194,36 @@ namespace Typeless
             }
         }
 
+        // Decodes above this many pixels are refused (a 99-byte PNG can declare 20000x20000, about 5 GB).
+        private const long MaxPixels = 250_000_000;
+
+        private sealed class ImageTooLargeException : InvalidOperationException
+        {
+            public ImageTooLargeException(string message) : base(message) { }
+        }
+
         private static BitmapSource Decode(string path)
         {
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            // No OnLoad cache: the size is checked before any pixels are decoded; the stream stays open until
+            // the WriteableBitmap copy below.
             var decoder = BitmapDecoder.Create(stream,
                 BitmapCreateOptions.PreservePixelFormat | BitmapCreateOptions.IgnoreColorProfile,
-                BitmapCacheOption.OnLoad);
+                BitmapCacheOption.None);
 
             BitmapFrame frame = decoder.Frames[0];
             if (decoder is IconBitmapDecoder)
             {
                 // Icons hold several sizes; use the largest.
                 foreach (BitmapFrame f in decoder.Frames)
-                    if (f.PixelWidth * f.PixelHeight > frame.PixelWidth * frame.PixelHeight) frame = f;
+                    if ((long)f.PixelWidth * f.PixelHeight > (long)frame.PixelWidth * frame.PixelHeight) frame = f;
             }
+            if ((long)frame.PixelWidth * frame.PixelHeight > MaxPixels)
+                throw new ImageTooLargeException($"The image is too large ({frame.PixelWidth}\u00D7{frame.PixelHeight}).");
 
             BitmapSource image = frame;
-            double angle = OrientationAngle(frame);
-            if (angle != 0) image = new TransformedBitmap(image, new RotateTransform(angle));
+            Transform? orient = Orientation(frame);
+            if (orient != null) image = new TransformedBitmap(image, orient);
 
             if (image.Format != PixelFormats.Bgra32)
                 image = new FormatConvertedBitmap(image, PixelFormats.Bgra32, null, 0);
@@ -222,17 +234,35 @@ namespace Typeless
             return result;
         }
 
-        private static double OrientationAngle(BitmapFrame frame)
+        // EXIF orientation 2..8 as the transform that makes the pixels upright, in the RotateSpec convention
+        // (mirror horizontally first, then turn clockwise): 2 mirror, 3 180, 4 mirror+180 (flip vertical),
+        // 5 mirror+270 (transpose), 6 90, 7 mirror+90 (transverse), 8 270. Null for 1 or no tag.
+        private static Transform? Orientation(BitmapFrame frame)
         {
+            ushort o = 1;
             try
             {
-                if (frame.Metadata is BitmapMetadata meta && meta.GetQuery("/app1/ifd/{ushort=274}") is ushort o)
-                {
-                    return o switch { 3 => 180, 6 => 90, 8 => 270, _ => 0 };
-                }
+                if (frame.Metadata is BitmapMetadata meta && meta.GetQuery("/app1/ifd/{ushort=274}") is ushort v) o = v;
             }
             catch { }
-            return 0;
+
+            (bool mirror, int deg) = o switch
+            {
+                2 => (true, 0),
+                3 => (false, 180),
+                4 => (true, 180),
+                5 => (true, 270),
+                6 => (false, 90),
+                7 => (true, 90),
+                8 => (false, 270),
+                _ => (false, 0),
+            };
+            if (!mirror && deg == 0) return null;
+            if (!mirror) return new RotateTransform(deg);
+            var group = new TransformGroup();
+            group.Children.Add(new ScaleTransform(-1, 1));
+            if (deg != 0) group.Children.Add(new RotateTransform(deg));
+            return group;
         }
 
         // Alpha-blends a Bgra32 image over white and returns an opaque Bgr24 image at 96 dpi.
@@ -244,9 +274,9 @@ namespace Typeless
             int w = bgra.PixelWidth, h = bgra.PixelHeight;
             int srcStride = w * 4;
             int dstStride = (w * 3 + 3) & ~3;
-            var src = new byte[srcStride * h];
+            var src = new byte[(long)srcStride * h];
             bgra.CopyPixels(src, srcStride, 0);
-            var dst = new byte[dstStride * h];
+            var dst = new byte[(long)dstStride * h];
 
             for (int y = 0; y < h; y++)
             {
@@ -352,11 +382,11 @@ namespace Typeless
 
             int sw = Math.Min(size, scaled.PixelWidth), sh = Math.Min(size, scaled.PixelHeight);
             int srcStride = scaled.PixelWidth * 4;
-            var src = new byte[srcStride * scaled.PixelHeight];
+            var src = new byte[(long)srcStride * scaled.PixelHeight];
             scaled.CopyPixels(src, srcStride, 0);
 
             int dstStride = size * 4;
-            var dst = new byte[dstStride * size];
+            var dst = new byte[(long)dstStride * size];
             int ox = (size - sw) / 2, oy = (size - sh) / 2;
             for (int y = 0; y < sh; y++)
                 Buffer.BlockCopy(src, y * srcStride, dst, (oy + y) * dstStride + ox * 4, sw * 4);
@@ -385,15 +415,19 @@ namespace Typeless
             return b;
         }
 
-        // Writes a one-page PDF with the image embedded as a JPEG, sized at 72/96 of its pixel size.
-        // Also used by PdfEdit.Merge for image pages.
+        // PDF pages may be at most 14400 points per side.
+        private const double MaxPagePoints = 14400;
+
+        // Writes a one-page PDF with the image embedded as a JPEG, sized at 72/96 of its pixel size, scaled down
+        // (pixels kept) when a side would pass MaxPagePoints. Also used by PdfEdit.Merge for image pages.
         internal static void SavePdf(BitmapSource image, string output)
         {
             BitmapSource flat = Flatten(image);
             byte[] jpeg = Encode(new JpegBitmapEncoder { QualityLevel = 92 }, flat);
             int pw = flat.PixelWidth, ph = flat.PixelHeight;
-            string w = (pw * 0.75).ToString("0.##", CultureInfo.InvariantCulture);
-            string h = (ph * 0.75).ToString("0.##", CultureInfo.InvariantCulture);
+            double pt = Math.Min(0.75, MaxPagePoints / Math.Max(pw, ph));
+            string w = Math.Min(MaxPagePoints, pw * pt).ToString("0.##", CultureInfo.InvariantCulture);
+            string h = Math.Min(MaxPagePoints, ph * pt).ToString("0.##", CultureInfo.InvariantCulture);
             string content = $"q {w} 0 0 {h} 0 0 cm /Im0 Do Q";
 
             using var ms = new MemoryStream();

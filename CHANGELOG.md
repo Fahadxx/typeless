@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.12.0
+
+- Installer: `TypelessSetup-<version>-x64.exe` and `-arm64.exe` install Typeless for the current user with no admin rights and no separate .NET install. It can optionally install ffmpeg through winget. The last page shows which optional programs were found. Running a newer installer asks before updating the installed version, the same version says it is already installed (with a repair option), and an older one asks before downgrading (a silent downgrade stops). Uninstall from Settings > Apps removes the app, the menu, the temp and LibreOffice profile folders, and the log (it asks).
+- Releases are built by GitHub Actions from a version tag for both architectures, with SHA-256 checksums. Signing through SignPath Foundation switches on once the project is accepted; until then the installers are unsigned and the menu sits under "Show more options" on Windows 11.
+- CLI `--register` (classic verbs, then the Windows 11 package, which replaces them once it registers), `--unregister`, `--shutdown` and `--backends`.
+- `build.ps1 -Package -SelfContained -Arch x64|arm64 -Publisher <name>` builds the release layout into `out\<arch>` without touching the installed copy. The shell DLL build finds any Visual Studio edition. Both scripts detect an ARM64 PC correctly from an emulated x64 shell.
+- README: screenshots, a format table, Install, Privacy, Code signing policy, Contributing and License sections, plus THIRD-PARTY-NOTICES.md.
+
+## 0.11.1
+
+Security and robustness pass before going public.
+
+- Video and audio: ffmpeg and ffprobe only open the container formats Typeless supports, so a crafted "video" (DASH manifest, concat list) can no longer make them read other files on the PC or reach a network share.
+- Office: macros are forced off in Word and PowerPoint before a file opens, and Word is never told to reopen a file that crashed it. The private LibreOffice profile disables macros, and only one LibreOffice conversion runs at a time.
+- Clean now removes everything it should: JPEG keeps only JFIF, the ICC profile and Adobe color info (MPF, C2PA, motion-photo data and anything after the image end are removed). PNG, WebP and GIF keep only known image chunks. ICO entries are cleaned. Multi-page and 16-bit TIFFs are refused instead of being flattened. JPEG, PNG and TIFF keep their photo orientation.
+- Crafted files fail cleanly instead of crashing or hanging: deep or repeated glb nodes and 3MF components, huge PLY/glb counts, negative glb offsets, NaN coordinates, cyclic PDF page trees, nested PDF forms, huge PDF pages and decompression-bomb images. A downloaded obj can no longer make Typeless open an mtl file outside its folder or on a network share.
+- Mirrored photos (EXIF orientation 2, 4, 5, 7) convert, crop and rotate the way they display.
+- Split, Pages and Merge refuse a PDF whose owner password forbids changing its pages (the restriction is no longer silently stripped). Owner-password PDFs that allow it still work.
+- Cancel or Esc during a Trim or Rotate save stops the encode, and nothing is saved. ffmpeg and LibreOffice now always stop when Typeless does, and leftover temp folders are removed after a day.
+- Selecting a huge number of files in the Windows 11 menu works (sent in batches). Files that miss the open menu get their own instead of being dropped.
+- Tools and DLLs never load from the clicked file's folder. The log rotates at 1 MB.
+
 ## 0.11.0
 
 - PARTS for 3D models: finds the separate objects in a file (even a merged STL) and shows them from the top. Click objects or drag a box to choose which to keep, then save one file (`<stem>_parts.<ext>`) or each object as its own file (`<stem>_part_1.<ext>`, ...).

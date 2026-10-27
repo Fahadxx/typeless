@@ -18,16 +18,22 @@ namespace Typeless
                 .ToList();
             if (paths.Count == 0) return 2;
 
+            // Paths are resolved, so tools and DLL loads no longer need the clicked file's folder as CWD.
+            try { Environment.CurrentDirectory = AppContext.BaseDirectory; } catch { }
+
             using SingleInstance? single = SingleInstance.Acquire();
             if (single == null)
             {
-                SingleInstance.Send(paths);
-                return 0;
+                if (SingleInstance.Send(paths)) return 0;
+                // The menu that owns the mutex did not take the files (closing, or busy): show our own.
+                Log.Write("Could not forward files to the open menu; opening another.");
             }
+
+            System.Threading.Tasks.Task.Run(SweepWorkDirs);
 
             RadialWindow? window = null;
             Dispatcher dispatcher = Dispatcher.CurrentDispatcher;
-            single.StartServer(p => dispatcher.BeginInvoke(new Action(() => window?.AddFile(p))));
+            single?.StartServer(p => dispatcher.BeginInvoke(new Action(() => window?.AddFile(p))));
 
             IReadOnlyList<string> targets = Formats.TargetsFor(paths[0]);
             if (targets.Count == 0)
@@ -37,11 +43,23 @@ namespace Typeless
             }
 
             var app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
+            int crashed = 0;
+            app.DispatcherUnhandledException += (_, e) =>
+            {
+                // Log and close quietly instead of a .NET error dialog; the exit code says it failed.
+                Log.Write("Unhandled: " + e.Exception);
+                e.Handled = true;
+                crashed = 1;
+                app.Shutdown(1);
+            };
             var radial = new RadialWindow(paths[0], SlicesFor(paths));
             window = radial;
             foreach (string p in paths.Skip(1)) radial.AddFile(p, live: false);
-            radial.Picked += single.Release;
-            radial.Closed += (_, _) => single.Release();
+            if (single != null)
+            {
+                radial.Picked += single.Release;
+                radial.Closed += (_, _) => single.Release();
+            }
 
             // Action handoff: the crop, trim, pages, compress, rotate, resize or parts window becomes MainWindow
             // before the radial closes, so the app keeps running.
@@ -68,8 +86,29 @@ namespace Typeless
             };
 
             app.Run(radial);
+            if (crashed != 0) return 1;
             return crop?.ExitCode ?? trim?.ExitCode ?? pages?.ExitCode ?? compress?.ExitCode ?? rotate?.ExitCode
                 ?? resize?.ExitCode ?? parts?.ExitCode ?? radial.ExitCode;
+        }
+
+        // Work dirs are deleted when a job ends; one left by a killed or crashed run is removed after a day.
+        private static void SweepWorkDirs()
+        {
+            try
+            {
+                string root = Path.Combine(Path.GetTempPath(), "Typeless");
+                if (!Directory.Exists(root)) return;
+                DateTime cutoff = DateTime.UtcNow.AddDays(-1);
+                foreach (string dir in Directory.EnumerateDirectories(root))
+                {
+                    try
+                    {
+                        if (Directory.GetLastWriteTimeUtc(dir) < cutoff) Directory.Delete(dir, recursive: true);
+                    }
+                    catch { }
+                }
+            }
+            catch { }
         }
 
         // Radial order per kind: these first, in this order, then the rest in their existing order.

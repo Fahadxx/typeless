@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 
 namespace Typeless
@@ -156,12 +157,17 @@ namespace Typeless
                 if (owned) word.Visible = false;
                 try { oldAlerts = word.DisplayAlerts; } catch { }
                 word.DisplayAlerts = 0;
-                try { oldSecurity = word.AutomationSecurity; word.AutomationSecurity = 3; } catch { }
+                // Macros off (msoAutomationSecurityForceDisable) before the untrusted file opens. Automation
+                // defaults to macros enabled, so if this cannot be set the file is not opened in Word.
+                try { oldSecurity = word.AutomationSecurity; } catch { }
+                word.AutomationSecurity = 3;
+                if ((int)word.AutomationSecurity != 3) throw new InvalidOperationException("Could not turn off macros in Word.");
 
                 using (new WordDialogWatchdog())
                 {
+                    // A protected file fails fast instead of a hidden password prompt that waits for the timeout.
                     doc = word.Documents.Open(FileName: src, ConfirmConversions: false, ReadOnly: true,
-                        AddToRecentFiles: false, Visible: false, NoEncodingDialog: true);
+                        AddToRecentFiles: false, PasswordDocument: "typeless", Visible: false, NoEncodingDialog: true);
                 }
 
                 switch (target)
@@ -307,10 +313,15 @@ namespace Typeless
 
             dynamic? pres = null;
             object? oldAlerts = null;
+            object? oldSecurity = null;
             try
             {
                 // Setting Visible = false throws in PowerPoint; WithWindow: msoFalse keeps it hidden.
                 try { oldAlerts = app.DisplayAlerts; app.DisplayAlerts = 1; } catch { }
+                // Macros and ActiveX off (msoAutomationSecurityForceDisable) before the untrusted file opens.
+                try { oldSecurity = app.AutomationSecurity; } catch { }
+                app.AutomationSecurity = 3;
+                if ((int)app.AutomationSecurity != 3) throw new InvalidOperationException("Could not turn off macros in PowerPoint.");
 
                 // FileName, ReadOnly: msoTrue, Untitled: msoTrue, WithWindow: msoFalse.
                 pres = app.Presentations.Open(src, -1, -1, 0);
@@ -329,8 +340,9 @@ namespace Typeless
                 }
                 else
                 {
-                    // Shared with the user's own PowerPoint: put their setting back.
+                    // Shared with the user's own PowerPoint: put their settings back.
                     try { if (oldAlerts != null) app.DisplayAlerts = oldAlerts; } catch { }
+                    try { if (oldSecurity != null) app.AutomationSecurity = oldSecurity; } catch { }
                 }
                 try { Marshal.FinalReleaseComObject(app); } catch { }
                 if (owned) EnsureExited(ours);
@@ -349,6 +361,43 @@ namespace Typeless
                 p.Dispose();
             }
             return pids;
+        }
+
+        // Macros never run in the private profile, whatever the file asks for: very high macro security,
+        // macro execution disabled, and no links to untrusted referers. Merged into an existing profile.
+        private static readonly (string Path, string Name, string Value)[] ProfileSettings =
+        {
+            ("/org.openoffice.Office.Common/Security/Scripting", "MacroSecurityLevel", "3"),
+            ("/org.openoffice.Office.Common/Security/Scripting", "DisableMacrosExecution", "true"),
+            ("/org.openoffice.Office.Common/Security/Scripting", "BlockUntrustedRefererLinks", "true"),
+        };
+
+        private static void HardenProfile(string profile)
+        {
+            string user = Path.Combine(profile, "user");
+            Directory.CreateDirectory(user);
+            string xcu = Path.Combine(user, "registrymodifications.xcu");
+            string text = File.Exists(xcu) ? File.ReadAllText(xcu) : "";
+            if (!text.Contains("</oor:items>"))
+                text = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<oor:items xmlns:oor=\"http://openoffice.org/2001/registry\" "
+                    + "xmlns:xs=\"http://www.w3.org/2001/XMLSchema\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">\n</oor:items>\n";
+            var add = new StringBuilder();
+            foreach (var (path, name, value) in ProfileSettings)
+            {
+                string item = $"<item oor:path=\"{path}\"><prop oor:name=\"{name}\" oor:op=\"fuse\"><value>{value}</value></prop></item>";
+                if (text.Contains(item)) continue;
+                // Any other value LibreOffice saved for the same setting goes first.
+                int at = text.IndexOf($"<item oor:path=\"{path}\"><prop oor:name=\"{name}\"", StringComparison.Ordinal);
+                if (at >= 0)
+                {
+                    int end = text.IndexOf("</item>", at, StringComparison.Ordinal);
+                    if (end >= 0) text = text.Remove(at, end + "</item>".Length - at);
+                }
+                add.Append(item).Append('\n');
+            }
+            if (add.Length == 0) return;
+            int close = text.LastIndexOf("</oor:items>", StringComparison.Ordinal);
+            File.WriteAllText(xcu, text.Insert(close, add.ToString()), new UTF8Encoding(false));
         }
 
         private static string LibreOffice(Kind kind, string src, string target, string work)
@@ -380,6 +429,7 @@ namespace Typeless
 
             string profile = Path.Combine(Log.AppDataDir, "lo-profile");
             Directory.CreateDirectory(profile);
+            HardenProfile(profile);
             string outDir = Path.Combine(work, "lo");
             Directory.CreateDirectory(outDir);
 
@@ -391,7 +441,17 @@ namespace Typeless
             if (pdfSource) args.Add("--infilter=writer_pdf_import");
             args.AddRange(new[] { "--convert-to", spec, "--outdir", outDir, src });
 
-            string stdout = Tools.RunProcess(soffice, args, SofficeTimeout);
+            // One soffice per profile: a second one would hand its job to the first over IPC and exit at once.
+            string stdout;
+            using (var gate = new Mutex(false, @"Local\Typeless.LibreOffice"))
+            {
+                bool held;
+                try { held = gate.WaitOne(SofficeTimeout); }
+                catch (AbandonedMutexException) { held = true; }
+                if (!held) throw new TimeoutException("LibreOffice is busy with another conversion.");
+                try { stdout = Tools.RunProcess(soffice, args, SofficeTimeout); }
+                finally { gate.ReleaseMutex(); }
+            }
 
             string stem = Path.GetFileNameWithoutExtension(src);
             List<string> hits = Directory.EnumerateFiles(outDir)
