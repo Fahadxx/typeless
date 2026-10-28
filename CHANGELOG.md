@@ -39,7 +39,7 @@ Security and robustness pass before going public.
 
 ## 0.9.0
 
-- Typeless is now a pure file converter. YouTube downloading moved to its own project, [typeless-youtube](https://github.com/Fahadxx/typeless-youtube).
+- Typeless is now a pure file converter. YouTube downloading was removed.
 - `--install` and `--uninstall` no longer touch the `typeless:` link handler. The right-click menu no longer lists `.url` shortcuts.
 
 ## 0.8.0

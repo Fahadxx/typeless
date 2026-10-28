@@ -220,9 +220,6 @@ Typeless --version               Print the version
 Bug reports, ideas and pull requests are welcome. For anything bigger than a small fix, please open an [issue](https://github.com/Fahadxx/typeless/issues) first so we can agree on the approach. There are no unit tests: changes are checked by building with `./build.ps1` and running the command line on real files.
 
 Found a security problem? Please report it privately through [GitHub security advisories](https://github.com/Fahadxx/typeless/security/advisories/new), not in a public issue.
-
-Looking for YouTube downloading? That is a separate project: [typeless-youtube](https://github.com/Fahadxx/typeless-youtube).
-
 ## License
 
 [MIT](LICENSE). Typeless builds on [PDFsharp](https://github.com/empira/PDFsharp), the [Open XML SDK](https://github.com/dotnet/Open-XML-SDK) and .NET; see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). ffmpeg, Microsoft Office and LibreOffice are separate programs that Typeless uses when you have them installed.
