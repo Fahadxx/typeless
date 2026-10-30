@@ -57,6 +57,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "ffmpeg"; Description: "Also install ffmpeg (adds video, audio and webp formats; uses winget, needs internet)"; Flags: unchecked; Check: HasWinget
+Name: "topmenu"; Description: "Show Typeless in the main Windows 11 right-click menu (asks for administrator approval)"; Flags: unchecked; Check: IsWin11
 
 [InstallDelete]
 ; Files from an older version. Safe because PrepareToInstall refuses any folder but our own.
@@ -77,10 +78,19 @@ const
 
 var
   MenuKind: String;
+  TopMenuWanted: Boolean;
 
 function HasWinget: Boolean;
 begin
   Result := FileExists(ExpandConstant('{localappdata}\Microsoft\WindowsApps\winget.exe'));
+end;
+
+function IsWin11: Boolean;
+var
+  Version: TWindowsVersion;
+begin
+  GetWindowsVersionEx(Version);
+  Result := Version.Build >= 22000;
 end;
 
 // Version of an existing install: this installer's Apps entry, else a dev build's exe (build.ps1).
@@ -189,12 +199,51 @@ begin
       Result := Copy(Lines[I], Length(Key) + 2, MaxInt);
 end;
 
+// The topmenu task: sign the package on this PC with a new certificate, trust it (one UAC prompt), and keep
+// Typeless.local.msix only when Windows trusts it, so --register falls back to the classic menu otherwise.
+procedure TrustLocalCert;
+var
+  Lines: TArrayOfString;
+  Cert, Thumb: String;
+  Rc: Integer;
+  Trusted: Boolean;
+begin
+  WizardForm.StatusLabel.Caption := 'Asking Windows to trust this PC''s Typeless certificate...';
+  if not RunTypeless('--sign-local', Lines) then
+    Log('Typeless --sign-local failed');
+  Cert := ValueOf(Lines, 'cert');
+  Thumb := ValueOf(Lines, 'thumbprint');
+  Log('Typeless --sign-local: thumbprint=' + Thumb);
+  if Cert = '' then
+    Log('No certificate to trust')
+  else if GetEnv('TYPELESS_NO_ELEVATE') = '1' then
+    Log('TYPELESS_NO_ELEVATE=1: administrator approval skipped')
+  else if ShellExec('runas', ExpandConstant('{app}\Typeless.exe'), '--trust-cert ' + Cert, '', SW_HIDE, ewWaitUntilTerminated, Rc) then
+    Log('Typeless --trust-cert: rc=' + IntToStr(Rc))
+  else
+    Log('Typeless --trust-cert not run: ' + SysErrorMessage(Rc));
+  Trusted := False;
+  if Thumb <> '' then
+    if RunTypeless('--local-cert ' + Thumb, Lines) then
+      Trusted := ValueOf(Lines, 'trusted') = 'yes';
+  if Trusted then
+    Log('Typeless --local-cert: trusted=yes')
+  else
+  begin
+    DeleteFile(ExpandConstant('{app}\Typeless.local.msix'));
+    Log('Typeless --local-cert: trusted=no, removed Typeless.local.msix');
+  end;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   Lines: TArrayOfString;
 begin
   if CurStep = ssPostInstall then
   begin
+    TopMenuWanted := WizardIsTaskSelected('topmenu');
+    if TopMenuWanted then
+      TrustLocalCert;
     WizardForm.StatusLabel.Caption := 'Adding Convert with Typeless to the right-click menu...';
     if RunTypeless('--register', Lines) then
       MenuKind := ValueOf(Lines, 'menu');
@@ -218,6 +267,8 @@ begin
     Text := Text + '.'
   else
     Text := Text + ' (on Windows 11 it is under Show more options).';
+  if (MenuKind <> 'top-level') and TopMenuWanted then
+    Text := Text + #13#10#13#10 + 'The main-menu option needs administrator approval. Run Setup again to retry.';
   if RunTypeless('--backends', Lines) then
   begin
     // No line may start with '#': the preprocessor would read it as a directive.
@@ -235,6 +286,25 @@ begin
   WizardForm.AdjustLabelHeight(WizardForm.FinishedLabel);
 end;
 
+// Offers to remove the certificate the topmenu task trusted. Runs while the app's Typeless.exe still exists.
+// A silent uninstall leaves it: it has no private key anywhere, and the next install replaces it.
+procedure AskUntrust(const Exe: String);
+var
+  Lines: TArrayOfString;
+  Rc: Integer;
+begin
+  if not RunTypeless('--local-cert', Lines) then Exit;
+  if ValueOf(Lines, 'trusted') <> 'yes' then Exit;
+  if MsgBox('Remove the certificate Typeless added so Windows trusts its menu? (asks for administrator approval)',
+    mbConfirmation, MB_YESNO) <> IDYES then Exit;
+  if GetEnv('TYPELESS_NO_ELEVATE') = '1' then
+    Log('TYPELESS_NO_ELEVATE=1: administrator approval skipped')
+  else if ShellExec('runas', Exe, '--untrust-cert', '', SW_HIDE, ewWaitUntilTerminated, Rc) then
+    Log('Typeless --untrust-cert: rc=' + IntToStr(Rc))
+  else
+    Log('Typeless --untrust-cert not run: ' + SysErrorMessage(Rc));
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Rc: Integer;
@@ -250,6 +320,8 @@ begin
     begin
       Exec(Exe, '--shutdown', '', SW_HIDE, ewWaitUntilTerminated, Rc);
       Exec(Exe, '--unregister', '', SW_HIDE, ewWaitUntilTerminated, Rc);
+      if not UninstallSilent then
+        AskUntrust(Exe);
     end;
     WaitForDelete(ExpandConstant('{app}\' + ShellDll));
   end

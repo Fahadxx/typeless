@@ -14,21 +14,24 @@ namespace Typeless
         private const string PackageName = "Typeless";
         private const int ShutdownWaitMs = 3000;
 
-        // Classic verbs first, then the sparse package from <app>\Typeless.msix. The package replaces the verbs
-        // only when it registers, so an unsigned or untrusted package leaves the classic menu working.
+        // Classic verbs first, then the sparse package from <app>\Typeless.local.msix (signed on this PC) when it
+        // exists, else <app>\Typeless.msix. The package replaces the verbs only when it registers, so an unsigned
+        // or untrusted package leaves the classic menu working.
         public static int Register()
         {
             RemovePackages();
             Installer.Install();
 
             string appDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
-            string msix = Path.Combine(appDir, "Typeless.msix");
+            string msix = Path.Combine(appDir, LocalSign.LocalMsixName);
+            if (!File.Exists(msix)) msix = Path.Combine(appDir, "Typeless.msix");
             if (!File.Exists(msix))
             {
                 Log.Write("Register: no Typeless.msix, classic menu only.");
                 Console.WriteLine("menu=classic");
                 return 0;
             }
+            Log.Write("Register: using " + Path.GetFileName(msix));
 
             try
             {

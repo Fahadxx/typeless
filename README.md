@@ -26,10 +26,10 @@
    - `TypelessSetup-<version>-arm64.exe` for ARM PCs (Snapdragon and similar).
 
    Not sure? Settings > System > About > **System type** tells you.
-2. Run it. It installs for your user only, needs no admin rights, and includes everything it needs to run.
+2. Run it. It installs for your user only, needs no admin rights (unless you tick the main-menu option below), and includes everything it needs to run.
 3. Right-click a file and choose **Convert with Typeless**.
 
-**Windows 11:** current releases are not code-signed yet, so the entry is under **Show more options** (or Shift+right-click). Once signed releases start, it moves to the main menu.
+**Windows 11:** current releases are not code-signed yet, so by default the entry is under **Show more options** (or Shift+right-click). To get it in the main menu, tick **Show Typeless in the main Windows 11 right-click menu** in Setup: it makes a certificate just for your PC and asks for administrator approval once (see [Code signing policy](#code-signing-policy)).
 
 **SmartScreen:** because the installer is new and unsigned, Windows may show "Windows protected your PC". Click **More info** > **Run anyway**. To be sure the file is genuine, compare it with `SHA256SUMS.txt` from the same release:
 
@@ -132,7 +132,18 @@ Free code signing provided by [SignPath.io](https://signpath.io), certificate by
 - Approvers: [Fahadxx](https://github.com/Fahadxx)
 - Every signing request is approved by hand.
 
-Signing starts once SignPath Foundation accepts the project. Releases before that are unsigned.
+Signing starts once SignPath Foundation accepts the project. Releases before that are not code-signed.
+
+### Main-menu option (local certificate)
+
+Windows 11 only puts the menu package in the main right-click menu when a certificate the PC trusts has signed it. Until releases are signed, Setup can do this on your PC instead, if you tick **Show Typeless in the main Windows 11 right-click menu**:
+
+- Setup makes a new certificate (`CN=Typeless Local`) on your PC and signs the menu package with it. The private key exists only in memory and is gone when Setup finishes, so nothing else can ever be signed with it.
+- The certificate is trusted in `LocalMachine\TrustedPeople`, which needs administrator approval once per install or update. Since no key is kept, the only thing it can ever vouch for is that one Typeless menu package. Each update replaces it with a new one.
+- If you decline, nothing is trusted and the menu stays under **Show more options**.
+- Uninstall asks whether to remove the certificate.
+
+The installer itself is still not signed, so Windows shows it as from an **Unknown publisher**.
 
 ## Build from source
 
@@ -195,7 +206,11 @@ Typeless --cut-preview <file> <out.png> [idle|select|done|error] [x|y|z]  Render
 Typeless --install               Register the Explorer context menu
 Typeless --uninstall             Remove the Explorer context menu
 Typeless --uninstall-verbs       Remove only the classic context menu verbs
-Typeless --register              Add the menu: classic verbs, then the Windows 11 package from Typeless.msix (replaces the verbs); prints menu=top-level or menu=classic
+Typeless --register [local]      Add the menu: classic verbs, then the Windows 11 package from Typeless.local.msix, else Typeless.msix (replaces the verbs); local signs and trusts it first (asks for admin); prints menu=top-level or menu=classic
+Typeless --sign-local            Sign Typeless.msix (CN=Typeless Local) into Typeless.local.msix with a new in-memory key; prints cert= and thumbprint=
+Typeless --trust-cert <base64>   (admin) Trust that CN=Typeless Local certificate in LocalMachine\TrustedPeople, replacing older ones
+Typeless --untrust-cert          (admin) Remove every CN=Typeless Local certificate from LocalMachine\TrustedPeople; prints removed=N
+Typeless --local-cert [thumbprint]  Print trusted=yes|no (any CN=Typeless Local, or that thumbprint), then thumbprint= per trusted one
 Typeless --unregister            Remove the Windows 11 package and the classic verbs
 Typeless --shutdown              Close other running Typeless from this folder (kill after 3 s)
 Typeless --backends              Print word=, powerpoint=, libreoffice=, ffmpeg=, ffprobe= (yes/no)
@@ -216,6 +231,7 @@ Typeless --version               Print the version
 - `TYPELESS_AUTOPARTS=<spec>` (same spec as `--keep-parts`) keeps those objects in the parts window and saves, as separate files with `TYPELESS_PARTS_SEPARATE=1` (same result as `--keep-parts`).
 - `TYPELESS_AUTOCUT=<axis>:<a0,b0,a1,b1>` picks that view and box in the cut window and saves; `TYPELESS_CUT_KEEP=inside|outside` keeps one side and `TYPELESS_CUT_OPEN=1` saves even with open faces (same result as `--cut`).
 - `TYPELESS_NO_POWERPOINT=1` skips PowerPoint and converts slides with LibreOffice.
+- `TYPELESS_NO_ELEVATE=1` makes `--register local` and Setup's main-menu option act as if the administrator prompt was declined (no prompt).
 
 </details>
 

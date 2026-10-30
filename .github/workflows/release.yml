@@ -21,8 +21,9 @@ jobs:
     env:
       # secrets.* cannot be used in a step `if:`, so expose whether signing is set up.
       HAS_SIGNPATH: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
-      # The exact subject of the SignPath Foundation certificate once issued; the dev name until then.
-      PUBLISHER: ${{ vars.PUBLISHER || 'CN=Typeless Dev' }}
+      # The exact subject of the SignPath Foundation certificate once issued; until then the local-signing
+      # publisher, which Setup signs on each PC when the main-menu option is ticked.
+      PUBLISHER: ${{ vars.PUBLISHER || 'CN=Typeless Local' }}
       INNO_URL: https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe
       INNO_SHA256: 9c73c3bae7ed48d44112a0f48e66742c00090bdb5bef71d9d3c056c66e97b732
     steps:

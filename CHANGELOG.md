@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.14.0
+
+- Windows 11 main menu without a code-signing certificate: Setup has a new, optional checkbox, "Show Typeless in the main Windows 11 right-click menu". When ticked, Setup makes a certificate just for your PC, signs the menu package with it and asks for administrator approval once to trust it. The certificate's private key exists only in memory and is gone when Setup finishes, so nothing else can ever be signed with it. Each install or update asks once and replaces the old certificate. If you decline, the menu stays under "Show more options". Uninstall offers to remove the certificate.
+- CLI `--register local`, `--sign-local`, `--trust-cert`, `--untrust-cert` and `--local-cert`, plus the `TYPELESS_NO_ELEVATE` hook.
+- This is the first release that includes CUT for 3D models (0.13.0 was not published as a release): drag a box over the top, front or side view and the model is cut along it into closed pieces a slicer can print.
+
 ## 0.13.0
 
 - CUT for 3D models: look at the model from the top, front or side and drag a box. The model is cut along the sides of the box and saved as `<stem>_inside.<ext>` and `<stem>_outside.<ext>` (or just one of them). A box that hangs over the edges makes a single straight cut.

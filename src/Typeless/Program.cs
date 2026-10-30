@@ -196,7 +196,23 @@ namespace Typeless
                     return 0;
 
                 case "--register":
-                    return Setup.Register();
+                    if (args.Length > 2 || (args.Length == 2 && !string.Equals(args[1], "local", StringComparison.OrdinalIgnoreCase)))
+                        return Usage();
+                    return args.Length == 2 ? LocalSign.RegisterLocal() : Setup.Register();
+
+                case "--sign-local":
+                    return LocalSign.SignLocal();
+
+                case "--trust-cert":
+                    if (args.Length != 2) return Usage();
+                    return LocalSign.TrustCert(args[1]);
+
+                case "--untrust-cert":
+                    return LocalSign.UntrustCert();
+
+                case "--local-cert":
+                    if (args.Length > 2) return Usage();
+                    return LocalSign.LocalCert(args.Length == 2 ? args[1] : null);
 
                 case "--unregister":
                     return Setup.Unregister();
@@ -998,11 +1014,17 @@ namespace Typeless
             Console.WriteLine("  (dev env) TYPELESS_CUT_KEEP=inside|outside  TYPELESS_CUT_OPEN=1  With TYPELESS_AUTOCUT, keep one side / save even with open faces (same as --cut ... inside|outside open)");
             Console.WriteLine("  (dev env) TYPELESS_AUTOPLAY=1  Trim window plays the range after load, closes at the end");
             Console.WriteLine("  (dev env) TYPELESS_NO_POWERPOINT=1  Skip PowerPoint; convert slides with LibreOffice");
+            Console.WriteLine("  (dev env) TYPELESS_NO_ELEVATE=1  --register local acts as if the UAC prompt was declined (no prompt)");
             Console.WriteLine("  Typeless --list-extensions       List the context menu extensions");
             Console.WriteLine("  Typeless --install               Register the Explorer context menu");
             Console.WriteLine("  Typeless --uninstall             Remove the Explorer context menu");
             Console.WriteLine("  Typeless --uninstall-verbs       Remove only the classic context menu verbs");
-            Console.WriteLine("  Typeless --register              Add the menu: classic verbs, then the Windows 11 package from Typeless.msix (replaces the verbs); prints menu=top-level or menu=classic");
+            Console.WriteLine("  Typeless --register [local]      Add the menu: classic verbs, then the Windows 11 package from Typeless.local.msix, else Typeless.msix (replaces the verbs); prints menu=top-level or menu=classic");
+            Console.WriteLine("                                   local = sign the package on this PC with a new in-memory key, trust it (UAC), register");
+            Console.WriteLine("  Typeless --sign-local            Sign Typeless.msix (CN=Typeless Local, unsigned) into Typeless.local.msix with a new in-memory key; prints cert= and thumbprint=");
+            Console.WriteLine("  Typeless --trust-cert <base64>   (elevated) Trust that CN=Typeless Local certificate in LocalMachine\\TrustedPeople, replacing older ones; rc 1 invalid, rc 5 not elevated");
+            Console.WriteLine("  Typeless --untrust-cert          (elevated) Remove every CN=Typeless Local certificate from LocalMachine\\TrustedPeople; rc 5 not elevated");
+            Console.WriteLine("  Typeless --local-cert [thumbprint]  Print trusted=yes|no (any CN=Typeless Local, or that thumbprint), then thumbprint= per one in the store");
             Console.WriteLine("  Typeless --unregister            Remove the Windows 11 package and the classic verbs");
             Console.WriteLine("  Typeless --shutdown              Close other running Typeless from this folder (kill after 3 s)");
             Console.WriteLine("  Typeless --backends              Print word=, powerpoint=, libreoffice=, ffmpeg=, ffprobe= (yes/no)");
