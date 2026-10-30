@@ -154,6 +154,10 @@ namespace Typeless
         // count is only known once the window reads the file.
         public static bool CanParts(string path) => KindOf(path) == Kind.Model;
 
+        // Cut (split a model with a box, fill the cut faces) is a window action for any 3D model,
+        // built in. Whether the cut faces close is only known once the cut runs.
+        public static bool CanCut(string path) => KindOf(path) == Kind.Model;
+
         public static IEnumerable<string> AllSourceExtensions =>
             Table.SelectMany(e => e.Sources).Distinct(StringComparer.Ordinal);
     }

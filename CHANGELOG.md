@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.13.0
+
+- CUT for 3D models: look at the model from the top, front or side and drag a box. The model is cut along the sides of the box and saved as `<stem>_inside.<ext>` and `<stem>_outside.<ext>` (or just one of them). A box that hangs over the edges makes a single straight cut.
+- Cut faces are filled, so both pieces are closed solids a slicer can print. Geometry away from the cut keeps its exact float32 values, and parts the box does not touch are copied whole. Every output is read back and checked before it is saved.
+- A damaged model with gaps is reported ("1 cut face could not be filled") and only saved with open faces after Save anyway.
+- CLI `--cut` and `--cut-preview`, plus the `TYPELESS_AUTOCUT`, `TYPELESS_CUT_KEEP` and `TYPELESS_CUT_OPEN` hooks.
+
 ## 0.12.0
 
 - Installer: `TypelessSetup-<version>-x64.exe` and `-arm64.exe` install Typeless for the current user with no admin rights and no separate .NET install. It can optionally install ffmpeg through winget. The last page shows which optional programs were found. Running a newer installer asks before updating the installed version, the same version says it is already installed (with a repair option), and an older one asks before downgrading (a silent downgrade stops). Uninstall from Settings > Apps removes the app, the menu, the temp and LibreOffice profile folders, and the log (it asks).

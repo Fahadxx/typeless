@@ -103,6 +103,10 @@ namespace Typeless
                         return Usage();
                     return KeepPartsFile(args[1], args[2], args.Length == 4);
 
+                case "--cut":
+                    if (args.Length < 4 || args.Length > 6) return Usage();
+                    return CutFile(args[1], args[2], args[3], args[4..]);
+
                 case "--probe":
                     if (args.Length < 2) return Usage();
                     return ProbeFile(args[1]);
@@ -169,6 +173,10 @@ namespace Typeless
                 case "--parts-preview":
                     if (args.Length < 3) return Usage();
                     return PartsPreview(args[1], args[2], args.Length > 3 ? args[3] : "idle");
+
+                case "--cut-preview":
+                    if (args.Length < 3) return Usage();
+                    return CutPreview(args[1], args[2], args.Length > 3 ? args[3] : "idle", args.Length > 4 ? args[4] : "z");
 
                 case "--list-extensions":
                     foreach (string ext in Installer.MenuExtensions)
@@ -477,6 +485,64 @@ namespace Typeless
             catch (Exception ex)
             {
                 Log.Write($"Keep parts failed: {file} {spec} separate={separate}: {ex}");
+                Console.Error.WriteLine(ex.Message);
+                return 1;
+            }
+        }
+
+        // Prints the output paths, then caps= and open= (outline counts). Nothing inside, everything
+        // inside, open faces without "open", or a write or verify error: rc 1 with the message. Not a
+        // model, no such file, or an invalid axis, box or option word: rc 2.
+        private static int CutFile(string file, string axisText, string boxText, string[] words)
+        {
+            try
+            {
+                if (!File.Exists(file)) throw new FileNotFoundException($"File not found: {file}", file);
+                if (!Formats.CanCut(file))
+                {
+                    Console.Error.WriteLine($"Not a 3D model: {Path.GetFileName(file)}");
+                    return 2;
+                }
+                char axis;
+                double a0, b0, a1, b1;
+                string keep = "both";
+                bool keepSet = false, open = false;
+                try
+                {
+                    axis = ModelCut.ParseAxis(axisText);
+                    (a0, b0, a1, b1) = ModelCut.ParseBox(boxText);
+                    foreach (string raw in words)
+                    {
+                        string w = raw.Trim().ToLowerInvariant();
+                        if (w == "open" && !open) open = true;
+                        else if ((w == "both" || w == "inside" || w == "outside") && !keepSet)
+                        {
+                            keep = w;
+                            keepSet = true;
+                        }
+                        else throw new FormatException($"Invalid cut option: {raw} (both, inside, outside or open, once each)");
+                    }
+                }
+                catch (FormatException ex)
+                {
+                    Console.Error.WriteLine(ex.Message);
+                    return 2;
+                }
+                Scene scene = ModelBackend.Read(file);
+                (List<string> paths, CutResult result) = ModelCut.Save(file, scene, axis, a0, b0, a1, b1, keep, open);
+                foreach (string output in paths) Console.WriteLine(output);
+                Console.WriteLine($"caps={result.Caps.ToString(CultureInfo.InvariantCulture)} open={result.OpenLoops.ToString(CultureInfo.InvariantCulture)}");
+                return 0;
+            }
+            catch (FileNotFoundException ex)
+            {
+                Log.Write($"Cut failed: {file} {axisText} {boxText}: {ex}");
+                Console.Error.WriteLine(ex.Message);
+                return 2;
+            }
+            catch (Exception ex)
+            {
+                Log.Write($"Cut failed: {file} {axisText} {boxText} {string.Join(" ", words)}: {ex}");
                 Console.Error.WriteLine(ex.Message);
                 return 1;
             }
@@ -853,6 +919,35 @@ namespace Typeless
             }
         }
 
+        private static int CutPreview(string file, string outPng, string state, string view)
+        {
+            char axis;
+            try { axis = ModelCut.ParseAxis(view); }
+            catch (FormatException ex)
+            {
+                Console.Error.WriteLine(ex.Message);
+                return 2;
+            }
+            if (!Formats.CanCut(file))
+            {
+                Console.Error.WriteLine($"Not a 3D model: {file}");
+                return 2;
+            }
+            try
+            {
+                var window = new CutWindow(file, preview: true);
+                window.RenderPreview(outPng, state, axis);
+                Console.WriteLine(outPng);
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Log.Write($"Cut preview failed: {ex}");
+                Console.Error.WriteLine(ex.Message);
+                return 1;
+            }
+        }
+
         private static int Usage()
         {
             PrintUsage();
@@ -873,6 +968,7 @@ namespace Typeless
             Console.WriteLine("  Typeless --model-info <file>     Print a 3D model's parts, triangles, vertices, bbox (mm), per-part color and what the reader dropped");
             Console.WriteLine("  Typeless --model-parts <file>    Print a 3D model's separate objects (pieces): source part, name, triangles, bbox (mm)");
             Console.WriteLine("  Typeless --keep-parts <file> <spec> [separate]  Keep only some objects (e.g. 1,3-5 or box:x0,y0,x1,y1 in mm), same format, one file or one per object, print the output paths");
+            Console.WriteLine("  Typeless --cut <file> <x|y|z> <a0,b0,a1,b1> [both|inside|outside] [open]  Cut a 3D model with a box seen from x, y or z (mm), fill the cut faces, save <stem>_inside/_outside, print the output paths");
             Console.WriteLine("  Typeless --probe <file>          Print duration, frame rate and video keyframe times");
             Console.WriteLine("  Typeless --audio <file>          Save a video's audio track as is (no re-encode), print the output path");
             Console.WriteLine("  Typeless --clean <file>          Remove an image's or video's metadata (location, camera, dates), print the output path");
@@ -889,6 +985,7 @@ namespace Typeless
             Console.WriteLine("  Typeless --rotate-preview <file> <out.png> [idle|changed|done|error]  Render the rotate window to PNG (dev; changed = rotated right, then mirrored)");
             Console.WriteLine("  Typeless --resize-preview <file> <out.png> [idle|changed|running|done|error]  Render the resize window to PNG (dev; changed = first smaller height and fps)");
             Console.WriteLine("  Typeless --parts-preview <file> <out.png> [idle|select|separate|done|error]  Render the parts window to PNG (dev; select = pieces 1-2 kept, separate = select plus Separate files)");
+            Console.WriteLine("  Typeless --cut-preview <file> <out.png> [idle|select|done|error] [x|y|z]  Render the cut window to PNG (dev; select = a box over the middle half; view x/y/z = side/front/top, default top)");
             Console.WriteLine("  (dev env) TYPELESS_AUTOPICK=<n>  Radial clicks item n (0-based, full list; flips to page 2 if needed)");
             Console.WriteLine("  (dev env) TYPELESS_AUTOCROP=x,y,w,h  TYPELESS_AUTOTRIM=start,end  Fractions; select and save after load");
             Console.WriteLine("  (dev env) TYPELESS_AUTOPAGES=<spec>  Pages window applies the --pages spec and saves after thumbnails load");
@@ -897,6 +994,8 @@ namespace Typeless
             Console.WriteLine("  (dev env) TYPELESS_AUTORESIZE=<height|orig>[,<fps|orig>]  Resize window selects those values and saves after load (same result as --resize)");
             Console.WriteLine("  (dev env) TYPELESS_AUTOPARTS=<spec>  Parts window keeps the --keep-parts spec and saves after load (same result as --keep-parts)");
             Console.WriteLine("  (dev env) TYPELESS_PARTS_SEPARATE=1  With TYPELESS_AUTOPARTS, save separate files (same result as --keep-parts ... separate)");
+            Console.WriteLine("  (dev env) TYPELESS_AUTOCUT=<axis>:<a0,b0,a1,b1>  Cut window selects that view and box and saves after load (same result as --cut)");
+            Console.WriteLine("  (dev env) TYPELESS_CUT_KEEP=inside|outside  TYPELESS_CUT_OPEN=1  With TYPELESS_AUTOCUT, keep one side / save even with open faces (same as --cut ... inside|outside open)");
             Console.WriteLine("  (dev env) TYPELESS_AUTOPLAY=1  Trim window plays the range after load, closes at the end");
             Console.WriteLine("  (dev env) TYPELESS_NO_POWERPOINT=1  Skip PowerPoint; convert slides with LibreOffice");
             Console.WriteLine("  Typeless --list-extensions       List the context menu extensions");

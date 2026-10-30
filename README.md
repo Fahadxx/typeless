@@ -100,6 +100,7 @@ Besides converting, the menu offers quick edits that fit the file:
 
 - Converts between stl, 3mf, obj, ply and glb with no extra software. Geometry is exact, and sizes stay correct. Part names and colors are kept where the format supports them.
 - **Parts**: finds the separate objects in a file (even an STL where everything is merged) and shows them from above. Click objects or drag a box to choose which to keep, then save them as one file or one file per object.
+- **Cut**: shows the model from the top, front or side. Drag a box and the model is cut along the box's sides, straight through. The cut faces are filled, so both pieces print. It saves `<name>_inside` and `<name>_outside`, or just the one you pick. A damaged model with gaps can't always be filled; Typeless tells you and asks before saving with open faces.
 - Every output is read back and checked before it is saved.
 
 ### Naming and keyboard
@@ -172,6 +173,7 @@ Typeless --resize-info <file>    Print a video's displayed size, fps, and the sm
 Typeless --model-info <file>     Print a 3D model's parts, triangles, vertices, bbox (mm), per-part color and what the reader dropped
 Typeless --model-parts <file>    Print a 3D model's separate objects (pieces): source part, name, triangles, bbox (mm)
 Typeless --keep-parts <file> <spec> [separate]  Keep only some objects (e.g. 1,3-5 or box:x0,y0,x1,y1 in mm), one file or one per object, print the output paths
+Typeless --cut <file> <x|y|z> <a0,b0,a1,b1> [both|inside|outside] [open]  Cut a 3D model with a box seen from x, y or z (mm), fill the cut faces, save <stem>_inside/_outside, print the output paths
 Typeless --probe <file>          Print duration, frame rate and video keyframe times
 Typeless --audio <file>          Save a video's audio track as is (no re-encode), print the output path
 Typeless --clean <file>          Remove an image's or video's metadata (location, camera, dates), print the output path
@@ -189,6 +191,7 @@ Typeless --compress-preview <file> <out.png> [idle|running|ready|done|error]  Re
 Typeless --rotate-preview <file> <out.png> [idle|changed|done|error]  Render the rotate window to PNG (dev)
 Typeless --resize-preview <file> <out.png> [idle|changed|running|done|error]  Render the resize window to PNG (dev)
 Typeless --parts-preview <file> <out.png> [idle|select|separate|done|error]  Render the parts window to PNG (dev)
+Typeless --cut-preview <file> <out.png> [idle|select|done|error] [x|y|z]  Render the cut window to PNG (dev)
 Typeless --install               Register the Explorer context menu
 Typeless --uninstall             Remove the Explorer context menu
 Typeless --uninstall-verbs       Remove only the classic context menu verbs
@@ -211,6 +214,7 @@ Typeless --version               Print the version
 - `TYPELESS_AUTOROTATE=<deg>[,h][,v]` flips, then turns deg clockwise in the rotate window, and saves (same result as `--rotate`).
 - `TYPELESS_AUTORESIZE=<height|orig>[,<fps|orig>]` selects those values in the resize window and saves (same result as `--resize`).
 - `TYPELESS_AUTOPARTS=<spec>` (same spec as `--keep-parts`) keeps those objects in the parts window and saves, as separate files with `TYPELESS_PARTS_SEPARATE=1` (same result as `--keep-parts`).
+- `TYPELESS_AUTOCUT=<axis>:<a0,b0,a1,b1>` picks that view and box in the cut window and saves; `TYPELESS_CUT_KEEP=inside|outside` keeps one side and `TYPELESS_CUT_OPEN=1` saves even with open faces (same result as `--cut`).
 - `TYPELESS_NO_POWERPOINT=1` skips PowerPoint and converts slides with LibreOffice.
 
 </details>
